@@ -66,6 +66,9 @@ a { color: var(--accent); }
 .route-edit { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .route-edit button { font-size: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
 #routeText { min-height: 84px; }
+.summary { padding: 10px 14px; }
+#mapStatus.err { color: var(--err); }
+.route-grip { cursor: move; }
 .county { padding: 7px 0; border-top: 1px solid var(--line); }
 .county b { display: block; }
 .county span { font-size: 13px; color: var(--muted); }
@@ -171,7 +174,7 @@ a { color: var(--accent); }
       <section class="panel" id="routesPanel" hidden>
         <h2>路線選擇</h2>
         <div id="routes"></div>
-        <p class="hint" style="margin:0 0 8px">電腦可按住綠色路線拖曳改道；手機請按地圖左上角「加途經點」再點地圖。途經點可再拖曳，按右鍵或長按可刪除。拉錯時用地圖左上角的按鈕或 Ctrl+Z 復原。</p>
+        <p class="hint" style="margin:0 0 8px">按住綠色路線拖曳即可改道（游標變成十字箭頭才算抓到線），手機用手指按住路線拖曳；也可按地圖左上角「加途經點」再點地圖。途經點可再拖曳，按右鍵或長按可刪除。距離、時間、明細和計畫文字會自動更新。拉錯時用地圖左上角的按鈕或 Ctrl+Z 復原。</p>
         <div class="field">
           <label for="routeText">修改建議路線</label>
           <textarea id="routeText" spellcheck="false"></textarea>
@@ -212,6 +215,10 @@ a { color: var(--accent); }
         <button type="button" id="addVia">加途經點</button>
         <button type="button" id="undoRoute">復原上一步</button>
         <button type="button" id="resetRoute">還原原路線</button>
+      </div>
+      <div class="panel summary" id="routeSummary" hidden>
+        <b id="summaryText"></b>
+        <p class="hint" id="mapStatus" role="status" style="margin:4px 0 0"></p>
       </div>
       <p class="hint" id="privacyNote" style="margin:0"></p>
     </div>
@@ -603,7 +610,7 @@ function hasMiddleAlley(route) {
 
 // 沒有經過巷弄的路線優先，其次才比時間
 function preferWideRoads(x, y) {
-  return hasMiddleAlley(x) - hasMiddleAlley(y) || x.duration - y.duration;
+  return hasMiddleAlley(x) - hasMiddleAlley(y) || travelSeconds(x) - travelSeconds(y);
 }
 
 async function streetCorner(roadA, roadB, near) {
@@ -840,6 +847,8 @@ function routePlan(route) {
     group[0].highwayRow = {
       type: road.type,
       name: road.label,
+      fromName: exact ? from[0] : road.label,
+      toName: exact ? to[0] : road.label,
       label: road.label + (exact ? '：' + from[0] + '（' + from[1] + 'K）→ ' + to[0] + '（' + to[1] + 'K）' : posts ? '（查無 K 數，依路線長度）' : ''),
       distance,
       seconds,
@@ -866,19 +875,41 @@ function routePlan(route) {
   };
 }
 
-// 累計後再四捨五入，讓各列分鐘數加總等於總時間
+// 累計後再四捨五入到小數一位，讓各列分鐘數加總等於總時間
 function rowMinutes(rows, secondsOf) {
   let elapsed = 0;
   return rows.map(row => {
-    const before = Math.round(elapsed / 60);
+    const before = Math.round(elapsed / 6);
     elapsed += secondsOf(row);
-    return Math.round(elapsed / 60) - before;
+    return (Math.round(elapsed / 6) - before) / 10;
   });
 }
 
+// 一般道路合併成一段，只標示從哪裡到哪裡；各條路名在建議路線中呈現
+function summaryRows(route) {
+  const rows = [];
+  routePlan(route).rows.forEach(r => {
+    const last = rows[rows.length - 1];
+    if (r.type !== 'general') rows.push(r);
+    else if (last && last.type === 'general') {
+      last.distance += r.distance;
+      last.seconds += r.seconds;
+    } else {
+      rows.push({ type: 'general', distance: r.distance, seconds: r.seconds });
+    }
+  });
+  rows.forEach((r, i) => {
+    if (r.type !== 'general') return;
+    const from = i > 0 ? rows[i - 1].toName : '起點';
+    const to = i < rows.length - 1 ? rows[i + 1].fromName : '終點';
+    r.label = '一般道路（' + from + ' → ' + to + '）';
+  });
+  return rows;
+}
+
 function segmentLines(route) {
-  const plan = routePlan(route), minutes = rowMinutes(plan.rows, r => r.seconds);
-  return plan.rows.map((r, i) => {
+  const rows = summaryRows(route), minutes = rowMinutes(rows, r => r.seconds);
+  return rows.map((r, i) => {
     const rate = r.rate ? '（每公里 ' + r.rate + ' 分）' : '';
     return (i + 1) + '. ' + r.label + '：' + formatDistance(r.distance) + '、' + formatMinutes(minutes[i]) + rate;
   });
@@ -1043,10 +1074,13 @@ function countyRows(route, detail) {
   }));
 }
 
+// 以十分之一分鐘為單位計算，避免小數誤差
 function formatMinutes(min) {
-  if (min < 1) return '不到 1 分鐘';
-  if (min < 60) return min + ' 分鐘';
-  return Math.floor(min / 60) + ' 小時' + (min % 60 ? ' ' + (min % 60) + ' 分鐘' : '');
+  const tenths = Math.round(min * 10);
+  if (tenths < 1) return '不到 0.1 分鐘';
+  if (tenths < 600) return (tenths / 10).toFixed(1) + ' 分鐘';
+  const rest = tenths % 600;
+  return Math.floor(tenths / 600) + ' 小時' + (rest ? ' ' + (rest / 10).toFixed(1) + ' 分鐘' : '');
 }
 
 function isMultiCounty(route) {
@@ -1105,9 +1139,7 @@ function formatDistance(m) {
 }
 
 function formatDuration(sec) {
-  const min = Math.max(1, Math.round(sec / 60));
-  if (min < 60) return min + ' 分鐘';
-  return Math.floor(min / 60) + ' 小時' + (min % 60 ? ' ' + (min % 60) + ' 分鐘' : '');
+  return formatMinutes(sec / 60);
 }
 
 function pad(n) {
@@ -1239,6 +1271,7 @@ function renderRoutes() {
   });
   const route = state.routes[state.selected];
   updateRouteEdit();
+  renderSummary();
   if (state.textRoute !== route) {
     state.textRoute = route;
     $('routeText').value = roadChain(route, 'main');
@@ -1259,6 +1292,17 @@ function selectRoute(i) {
 }
 
 // ---------- 手動調整路線 ----------
+function routeFigures(route) {
+  return formatDistance(travelDistance(route)) + '／' + formatDuration(travelSeconds(route));
+}
+
+// 明細和計畫文字離地圖較遠，所以在地圖下方顯示目前結果
+function renderSummary() {
+  const route = state.routes[state.selected];
+  $('routeSummary').hidden = !route && !$('mapStatus').textContent;
+  $('summaryText').textContent = route ? '目前路線：' + routeFigures(route) : '';
+}
+
 function updateRouteEdit() {
   const route = state.routes[state.selected];
   $('routeEdit').hidden = !route;
@@ -1313,9 +1357,12 @@ async function rerouteSelected(vias) {
     route.baseRoute = old.baseRoute || old;
     route.previousRoute = old;
     state.routes[i] = route;
+    const before = routeFigures(old), after = routeFigures(route);
     renderRoutes();
     buildText();
-    setStatus('');
+    setStatus(before === after && roadChain(old, 'full') === roadChain(route, 'full')
+      ? '路線沒有變化，請把線拖到另一條路上再放開。'
+      : '路線已更新：' + before + ' → ' + after + '，路段明細和計畫文字已同步。');
     drawMap(false);
     return route;
   } catch (e) {
@@ -1492,6 +1539,47 @@ function startRouteDrag(e) {
   document.addEventListener('mouseup', up);
 }
 
+function pixelsToRoute(route, point) {
+  const line = route.geometry.coordinates.map(c => map.latLngToContainerPoint([c[1], c[0]]));
+  let best = Infinity;
+  for (let i = 1; i < line.length; i++) best = Math.min(best, L.LineUtil.pointToSegmentDistance(point, line[i - 1], line[i]));
+  return best;
+}
+
+// Leaflet 的路線線段不會收到手指事件，所以自行判斷手指是否按在路線上
+function startTouchDrag(e) {
+  const route = state.routes[state.selected];
+  if (!route || state.picking || state.addingVia || e.touches.length !== 1) return;
+  if (e.target.closest('.leaflet-control, .leaflet-marker-icon')) return;
+  const box = $('map').getBoundingClientRect();
+  const toPoint = t => L.point(t.clientX - box.left, t.clientY - box.top);
+  const startPoint = toPoint(e.touches[0]);
+  if (pixelsToRoute(route, startPoint) > 18) return;
+  e.preventDefault();
+  e.stopPropagation();
+  map.dragging.disable();
+  const startLatLng = map.containerPointToLatLng(startPoint);
+  const ghost = L.circleMarker(startLatLng, { radius: 9, color: ROUTE_COLORS.on, fillColor: '#fff', fillOpacity: 1, weight: 3, interactive: false }).addTo(map);
+  let last = startPoint;
+  const move = ev => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    last = toPoint(ev.touches[0]);
+    ghost.setLatLng(map.containerPointToLatLng(last));
+  };
+  const end = () => {
+    document.removeEventListener('touchmove', move, true);
+    document.removeEventListener('touchend', end, true);
+    document.removeEventListener('touchcancel', end, true);
+    map.dragging.enable();
+    ghost.remove();
+    if (last.distanceTo(startPoint) > 8) insertVia(route, startLatLng, map.containerPointToLatLng(last));
+  };
+  document.addEventListener('touchmove', move, { capture: true, passive: false });
+  document.addEventListener('touchend', end, true);
+  document.addEventListener('touchcancel', end, true);
+}
+
 // ---------- 地圖 ----------
 let map = null, layer = null, baseLayer = null, layerControl = null, googleLayer = null, googleSession = '', googleAttribution = '';
 if (window.L) {
@@ -1507,6 +1595,7 @@ if (window.L) {
   layer = L.layerGroup().addTo(map);
   map.on('click', onMapClick);
   map.on('moveend', updateGoogleAttribution);
+  $('map').addEventListener('touchstart', startTouchDrag, { capture: true, passive: false });
   const editControl = L.control({ position: 'topleft' });
   editControl.onAdd = () => {
     L.DomEvent.disableClickPropagation($('routeEdit'));
@@ -1603,7 +1692,7 @@ function drawMap(fit = true) {
   if (chosen) {
     const line = L.geoJSON(chosen.geometry, { style: { color: ROUTE_COLORS.on, weight: 6 } }).addTo(layer);
     // 加一條較粗的透明線，比較容易按到路線
-    const grip = L.geoJSON(chosen.geometry, { style: { color: ROUTE_COLORS.on, weight: 18, opacity: 0 } }).addTo(layer);
+    const grip = L.geoJSON(chosen.geometry, { style: { color: ROUTE_COLORS.on, weight: 26, opacity: 0, className: 'route-grip' } }).addTo(layer);
     grip.on('mousedown', startRouteDrag);
     bounds.push(line.getBounds());
     chosen.vias.forEach((via, i) => viaPin(chosen, via, i));
@@ -1654,6 +1743,9 @@ async function onMapClick(e) {
 function setStatus(text, isError) {
   $('status').textContent = text;
   $('status').className = isError ? 'err' : '';
+  $('mapStatus').textContent = text;
+  $('mapStatus').className = 'hint' + (isError ? ' err' : '');
+  renderSummary();
 }
 
 function clearRoutes() {
@@ -1662,6 +1754,7 @@ function clearRoutes() {
   state.textRoute = null;
   $('routesPanel').hidden = $('textPanel').hidden = true;
   updateRouteEdit();
+  renderSummary();
   renderSegments();
   renderCounties();
 }
