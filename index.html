@@ -1,0 +1,1868 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline' https://cdnjs.cloudflare.com; img-src data: https://wmts.nlsc.gov.tw https://cdnjs.cloudflare.com https://tile.googleapis.com; connect-src https://geocode.arcgis.com https://nominatim.openstreetmap.org https://routing.openstreetmap.de https://api.nlsc.gov.tw https://maps.googleapis.com https://routes.googleapis.com https://tile.googleapis.com; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>路線評估工具</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" integrity="sha256-tXCrvaljxgtN5LT/Syb5Mm9T+yzPFGH98JVcoJT7JTk=" crossorigin="anonymous">
+<style>
+:root {
+  --bg: #f4f5f3; --panel: #ffffff; --ink: #1f2522; --muted: #626b66; --line: #d7dbd7;
+  --accent: #17624f; --accent-ink: #ffffff; --soft: #e6f1ed; --warn: #8a4b00; --err: #a32a22;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161a18; --panel: #202522; --ink: #e9ece9; --muted: #a2aaa5; --line: #3a413d;
+    --accent: #5cc2a4; --accent-ink: #0d1f19; --soft: #24352f; --warn: #e5ae68; --err: #f0897f;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.6 "Microsoft JhengHei", "Noto Sans TC", "PingFang TC", sans-serif;
+}
+.wrap { max-width: 1240px; margin: 0 auto; padding: 20px 16px 32px; }
+h1 { font-size: 21px; margin: 0 0 14px; }
+.grid { display: grid; grid-template-columns: minmax(0, 440px) minmax(0, 1fr); gap: 14px; align-items: start; }
+.col { display: grid; gap: 14px; min-width: 0; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+h2 { font-size: 15px; margin: 0 0 8px; }
+label { display: block; font-weight: 600; margin-bottom: 4px; }
+.row { display: flex; gap: 8px; align-items: center; }
+.field { margin-bottom: 10px; }
+.pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+input[type=text], input[type=password], input[type=number], input[type=datetime-local], select, textarea {
+  width: 100%; min-width: 0; padding: 8px 10px; font: inherit; color: var(--ink);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+}
+textarea { min-height: 260px; resize: vertical; line-height: 1.7; }
+button, .btn {
+  font: inherit; padding: 8px 12px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink); text-decoration: none; display: inline-block;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
+button.active { background: var(--soft); border-color: var(--accent); }
+button:disabled { opacity: .6; cursor: default; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+a { color: var(--accent); }
+.cand { margin-top: 6px; }
+.hint { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
+#status { min-height: 22px; margin: 10px 0 0; font-size: 14px; }
+#status.err { color: var(--err); }
+.route { display: flex; gap: 8px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 8px; cursor: pointer; font-weight: 400; }
+.route.on { border-color: var(--accent); background: var(--soft); }
+.route input { margin-top: 5px; }
+.route b { display: block; }
+.route span { font-size: 13px; color: var(--muted); }
+.tools { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 8px; }
+.tools label { display: flex; gap: 5px; align-items: center; margin: 0; font-weight: 400; }
+.tools select { width: auto; padding: 4px 8px; }
+.side { position: sticky; top: 14px; display: grid; gap: 8px; min-width: 0; }
+#map { height: 640px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); }
+#map.picking, #map.picking .leaflet-interactive { cursor: crosshair; }
+.route-edit { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.route-edit button { font-size: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+#routeText { min-height: 84px; }
+.county { padding: 7px 0; border-top: 1px solid var(--line); }
+.county b { display: block; }
+.county span { font-size: 13px; color: var(--muted); }
+.via-pin { width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 4px solid #17624f; box-shadow: 0 0 3px rgba(0,0,0,.5); }
+@media (max-width: 860px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .col { display: contents; }
+  #formPanel { order: 1; }
+  .side { position: static; order: 2; }
+  #routesPanel { order: 3; }
+  #textPanel { order: 4; }
+  #map { height: 380px; }
+  input[type=text], input[type=password], input[type=number], input[type=datetime-local], select, textarea { font-size: 16px; }
+  .row { flex-wrap: wrap; }
+  .row > input[type=text] { flex: 1 1 60%; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>路線評估工具</h1>
+  <div class="grid">
+    <div class="col">
+      <section class="panel" id="formPanel">
+        <div class="field">
+          <label for="engine">資料來源</label>
+          <select id="engine">
+            <option value="free">免費服務（不用金鑰）</option>
+            <option value="google">Google（含路況，需金鑰）</option>
+          </select>
+        </div>
+        <div class="field" id="googleBox" hidden>
+          <label for="apiKey">Google API 金鑰</label>
+          <input type="password" id="apiKey" autocomplete="off" spellcheck="false">
+          <div class="tools" style="margin:6px 0 0">
+            <label><input type="checkbox" id="rememberKey">記住在這台電腦</label>
+          </div>
+          <p class="hint">未勾選時，金鑰只留在這個頁面，關閉就消失。本次已用：定位 <span id="usageGeocode">0</span> 次、路線 <span id="usageRoutes">0</span> 次。</p>
+        </div>
+        <div class="field">
+          <label for="startInput">起點</label>
+          <div class="row">
+            <input type="text" id="startInput" placeholder="門牌、地標或經緯度">
+            <button type="button" id="startPick" title="在地圖上點選起點">地圖選點</button>
+          </div>
+          <select id="startCand" class="cand" aria-label="起點定位結果" hidden></select>
+        </div>
+        <div class="field">
+          <label for="endInput">終點</label>
+          <div class="row">
+            <input type="text" id="endInput" placeholder="門牌、地標或經緯度">
+            <button type="button" id="endPick" title="在地圖上點選終點">地圖選點</button>
+          </div>
+          <select id="endCand" class="cand" aria-label="終點定位結果" hidden></select>
+          <p class="hint">經緯度可貼 25.047, 121.517 或 25°02'49"N 121°31'01"E。地號無法直接搜尋，請到<a href="https://maps.nlsc.gov.tw/" target="_blank" rel="noopener noreferrer">國土測繪圖資服務雲</a>定位後，開啟右側地圖的「地段界線」對照選點。</p>
+        </div>
+        <div class="field">
+          <label for="mode">交通方式</label>
+          <select id="mode">
+            <option value="car">汽車（可行駛國道）</option>
+            <option value="bike">自行車</option>
+            <option value="foot">步行</option>
+          </select>
+        </div>
+        <div id="timeBox">
+          <div class="field">
+            <label for="depart">預計出發時間</label>
+            <input type="datetime-local" id="depart">
+          </div>
+          <div class="field pair">
+            <div>
+              <label for="freewayRate">國道（分／公里）</label>
+              <input type="number" id="freewayRate" min="0.1" max="5" step="0.05" value="0.6">
+            </div>
+            <div>
+              <label for="expressRate">快速道路（分／公里）</label>
+              <input type="number" id="expressRate" min="0.1" max="5" step="0.05" value="0.8">
+            </div>
+          </div>
+          <div id="factorBox">
+            <div class="field pair">
+              <div>
+                <label for="band">時段</label>
+                <select id="band"></select>
+              </div>
+              <div>
+                <label for="factor">時間係數</label>
+                <input type="number" id="factor" min="1" max="5" step="0.05">
+              </div>
+            </div>
+            <p class="hint" style="margin-bottom:10px">時段依出發時間自動判斷，連假請手動改為假日。係數只套用一般道路，為可調整的預設值，非實測路況。</p>
+          </div>
+          <p class="hint" id="googleTimeHint" style="margin-bottom:10px" hidden>一般道路的時間由 Google 依出發時間與路況預估；出發時間已過時，改用目前路況。</p>
+        </div>
+        <div class="row">
+          <button type="button" class="primary" id="go" style="flex:1">開始評估</button>
+          <button type="button" id="swap">起訖對調</button>
+          <button type="button" id="clear">清除</button>
+        </div>
+        <p id="status" role="status"></p>
+      </section>
+
+      <section class="panel" id="routesPanel" hidden>
+        <h2>路線選擇</h2>
+        <div id="routes"></div>
+        <p class="hint" style="margin:0 0 8px">電腦可按住綠色路線拖曳改道；手機請按地圖左上角「加途經點」再點地圖。途經點可再拖曳，按右鍵或長按可刪除。拉錯時用地圖左上角的按鈕或 Ctrl+Z 復原。</p>
+        <div class="field">
+          <label for="routeText">修改建議路線</label>
+          <textarea id="routeText" spellcheck="false"></textarea>
+          <p class="hint">以 → 或頓號分隔路名，可新增、刪除或調整順序，再按下方按鈕重算距離與時間。</p>
+        </div>
+        <div class="row" style="flex-wrap:wrap">
+          <button type="button" class="primary" id="applyRouteText">依文字重新規劃</button>
+          <a class="btn" id="gmap" target="_blank" rel="noopener noreferrer">到 Google 地圖核對</a>
+        </div>
+        <div id="segmentBox" style="margin-top:12px"></div>
+        <div id="countyBox" style="margin-top:12px" hidden></div>
+      </section>
+
+      <section class="panel" id="textPanel" hidden>
+        <h2>任務計畫文字</h2>
+        <div class="tools">
+          <label>路線內容
+            <select id="detail">
+              <option value="full">詳細路段</option>
+              <option value="main">主要幹道</option>
+            </select>
+          </label>
+          <label><input type="checkbox" id="withSegments" checked>列入路段明細</label>
+          <label><input type="checkbox" id="withCounty" checked>列入分縣市</label>
+          <label><input type="checkbox" id="withAlt" checked>列入備案路線</label>
+        </div>
+        <textarea id="output" aria-label="任務計畫文字"></textarea>
+        <div class="row" style="margin-top:8px">
+          <button type="button" class="primary" id="copy">複製文字</button>
+          <span class="hint" id="copyMsg" style="margin:0"></span>
+        </div>
+      </section>
+    </div>
+
+    <div class="side">
+      <div id="map"></div>
+      <div id="routeEdit" class="route-edit" hidden>
+        <button type="button" id="addVia">加途經點</button>
+        <button type="button" id="undoRoute">復原上一步</button>
+        <button type="button" id="resetRoute">還原原路線</button>
+      </div>
+      <p class="hint" id="privacyNote" style="margin:0"></p>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" integrity="sha256-XJrs/DDkVkUZ29zdzFOkGCJ9zHVo5hnpdi3c7HYJ7Uc=" crossorigin="anonymous"></script>
+<script>
+const $ = id => document.getElementById(id);
+const MODES = {
+  car: { label: '汽車', osrm: 'routed-car', google: 'driving', googleMode: 'DRIVE', traffic: true },
+  bike: { label: '自行車', osrm: 'routed-bike', google: 'bicycling', googleMode: 'BICYCLE', traffic: false },
+  foot: { label: '步行', osrm: 'routed-foot', google: 'walking', googleMode: 'WALK', traffic: false }
+};
+const PRIVACY_NOTES = {
+  free: '本頁不儲存查詢紀錄，關閉或按「清除」後即消失。但查詢時，輸入內容與座標會傳給 Esri、OpenStreetMap 路線與定位服務，沿路座標與地圖範圍會傳給國土測繪中心；傳輸有加密，無法保證對方不留存。機敏案件請勿輸入。',
+  google: '本頁不儲存查詢紀錄，關閉或按「清除」後即消失。但查詢時，輸入內容、座標與地圖範圍會傳給 Google，沿路座標也會傳給國土測繪中心查詢地段與縣市；傳輸有加密，無法保證對方不留存。機敏案件請勿輸入。'
+};
+const KEY_STORAGE = 'routeToolGoogleKey';
+const EXPRESS_NAMES = {
+  '西部濱海': '台61', '萬里瑞濱': '台62', '八里新店': '台64', '五股土城': '台65', '觀音大溪': '台66', '南寮竹東': '台68',
+  '後龍汶水': '台72', '漢寶草屯': '台76', '台西古坑': '台78', '東石嘉義': '台82', '北門玉井': '台84', '台南關廟': '台86', '高雄潮州': '台88'
+};
+// 交流道里程與座標：交通部高速公路局、公路局開放資料（名稱, K, 緯度, 經度）
+const KM_POSTS = {
+"國道1號":[["基隆端",0,25.12289,121.73578],["基隆交流道",1,25.11624,121.7292],["八堵交流道",2,25.10353,121.7209],["大華系統交流道",5,25.09737,121.6998],["五堵交流道",6,25.08718,121.68918],["汐止交流道",10,25.0762,121.65957],["汐止系統交流道",11,25.07349,121.65019],["高架道路汐止端",13,25.06737,121.63193],["東湖交流道",15,25.06547,121.61223],["內湖交流道",17,25.06426,121.59258],["圓山交流道",23,25.07272,121.53479],["台北交流道",25,25.0777,121.51594],["三重交流道",27,25.07624,121.49636],["五股轉接道",32,25.07156,121.4482],["五股交流道",33,25.06894,121.43872],["泰山轉接道",35,25.06433,121.42005],["林口交流道",41,25.06515,121.36797],["桃園交流道",49,25.03846,121.29879],["機場系統交流道",52,25.02101,121.27614],["內壢交流道",57,24.99061,121.2396],["中壢轉接道",59,24.97782,121.22564],["中壢交流道",62,24.96031,121.20303],["平鎮系統交流道",65,24.93639,121.19014],["幼獅交流道",67,24.92719,121.17336],["楊梅交流道",69,24.91101,121.16518],["高架道路楊梅端",71,24.90029,121.15093],["湖口交流道",83,24.87699,121.0377],["竹北交流道",91,24.82443,121.01774],["新竹交流道",95,24.79035,121.00564],["新竹系統交流道",99,24.76023,120.99111],["頭份交流道",110,24.69508,120.92045],["頭屋交流道",125,24.58371,120.86002],["苗栗交流道",132,24.52955,120.82654],["銅鑼交流道",140,24.47733,120.78468],["三義交流道",150,24.39428,120.7593],["后里交流道",160,24.31921,120.70555],["台中系統交流道",165,24.27593,120.69349],["豐原交流道",168,24.249,120.69028],["大雅交流道",174,24.20691,120.65926],["台中交流道",178,24.18073,120.63417],["南屯交流道",181,24.15733,120.6203],["王田交流道",189,24.11881,120.58344],["彰化系統交流道",192,24.10455,120.56052],["彰化交流道",198,24.0693,120.5226],["埔鹽系統交流道",207,23.98981,120.50886],["員林交流道",211,23.95392,120.50642],["北斗交流道",220,23.87469,120.49037],["西螺交流道",230,23.78599,120.47731],["虎尾交流道",235,23.7424,120.46849],["斗南交流道",240,23.69847,120.47368],["雲林系統交流道",243,23.67439,120.46039],["大林交流道",250,23.61529,120.43768],["民雄交流道",257,23.55559,120.41654],["嘉義交流道",264,23.49697,120.39349],["水上交流道",270,23.44823,120.36957],["嘉義系統交流道",272,23.43269,120.35966],["新營交流道",288,23.31071,120.29309],["下營系統交流道",299,23.22447,120.24092],["麻豆交流道",303,23.18883,120.23624],["安定交流道",311,23.11913,120.24298],["台南系統交流道",315,23.084,120.25165],["永康交流道",319,23.04798,120.25258],["大灣交流道",324,23.00346,120.24811],["仁德交流道",327,22.97639,120.24877],["仁德系統交流道",330,22.94942,120.24886],["路竹交流道",338,22.88262,120.27756],["高科交流道",342,22.84946,120.29289],["岡山交流道",349,22.79206,120.31944],["楠梓交流道",356,22.73122,120.33424],["鼎金系統交流道",362,22.67772,120.32881],["高雄交流道",367,22.63377,120.33681],["瑞隆路出口匝道",369,22.61581,120.33741],["五甲系統交流道",370,22.6073,120.34057],["五甲交流道",372,22.59156,120.33557],["高雄端",373,22.58561,120.32827],["汐止端",13,25.06737,121.63193],["堤頂交流道",18,25.06767,121.58341],["下塔悠出口匝道",20,25.07109,121.56418],["環北交流道",25,25.0777,121.51594],["五股轉接道",32,25.07156,121.4482],["泰山轉接道",35,25.06433,121.42005],["機場系統交流道",52,25.02101,121.27614],["中壢轉接道",59,24.97782,121.22564],["校前路交流道",70,24.90352,121.16012],["楊梅端",71,24.90029,121.15093]],
+"國道2號":[["機場端",0,25.06574,121.21757],["大園交流道",1,25.05912,121.21323],["大竹交流道",4,25.0354,121.23626],["機場系統交流道",8,25.02038,121.2724],["南桃園交流道",11,24.99969,121.28346],["大湳交流道",18,24.96228,121.32423],["鶯歌系統交流道",20,24.94482,121.32404]],
+"國道2甲":[["圳頭交流道",0,25.07348,121.20059],["大園交流道",2,25.05985,121.21304]],
+"國道3號":[["基金交流道",0,25.13971,121.71468],["瑪東系統交流道",2,25.13005,121.69861],["汐止系統交流道",10,25.08017,121.64805],["新台五路交流道",12,25.06282,121.64257],["南港交流道",14,25.05101,121.62875],["南港系統交流道",16,25.03529,121.62005],["南深路出口匝道",16,25.03529,121.62005],["木柵交流道",20,25.00876,121.5965],["新店交流道",26,24.97427,121.55496],["安坑交流道",31,24.96865,121.52526],["中和交流道",35,24.98876,121.4868],["土城交流道",42,24.9617,121.43619],["樹林交流道",46,24.95089,121.39959],["三鶯交流道",50,24.94061,121.36194],["鶯歌系統交流道",54,24.93958,121.32913],["大溪交流道",62,24.89528,121.26603],["龍潭交流道",68,24.86177,121.22345],["高原交流道",73,24.83092,121.19954],["關西交流道",79,24.80053,121.17306],["竹林交流道",90,24.76867,121.08298],["寶山交流道",98,24.75677,121.00882],["新竹系統交流道",100,24.75712,120.98851],["茄苳交流道",103,24.75726,120.95762],["香山交流道",109,24.73722,120.91374],["西濱交流道",115,24.70183,120.86766],["竹南交流道",119,24.67661,120.84728],["大山交流道",124,24.63677,120.8182],["後龍交流道",130,24.59925,120.78702],["通霄交流道",144,24.49791,120.70552],["苑裡交流道",156,24.39732,120.6695],["大甲交流道",164,24.33727,120.64377],["中港系統交流道",169,24.30711,120.61307],["沙鹿交流道",176,24.25097,120.59003],["龍井交流道",182,24.1952,120.57229],["和美交流道",191,24.14047,120.52071],["彰化系統交流道",196,24.10797,120.55187],["快官交流道",202,24.0918,120.60414],["烏日交流道",207,24.06829,120.64611],["中投交流道",209,24.06546,120.66245],["霧峰交流道",211,24.05067,120.67859],["霧峰系統交流道",214,24.02786,120.66915],["草屯交流道",217,24.00565,120.65249],["中興系統交流道",222,23.95888,120.65422],["中興交流道",224,23.94896,120.66899],["南投交流道",228,23.92232,120.68425],["名間交流道",237,23.8526,120.70247],["竹山交流道",243,23.79736,120.7012],["南雲交流道",250,23.7745,120.65912],["斗六交流道",260,23.73273,120.59548],["古坑系統交流道",269,23.66603,120.57455],["古坑交流道",271,23.64654,120.57295],["梅山交流道",279,23.59595,120.52315],["竹崎交流道",290,23.52003,120.48473],["中埔交流道",297,23.45089,120.48493],["水上系統交流道",300,23.42902,120.46849],["白河交流道",311,23.34712,120.43945],["柳營交流道",322,23.27131,120.37903],["烏山頭交流道",329,23.21275,120.356],["官田系統交流道",334,23.167,120.35231],["善化交流道",340,23.12414,120.33179],["新化系統交流道",346,23.06435,120.32386],["關廟交流道",357,22.97682,120.32466],["田寮交流道",369,22.88056,120.36056],["燕巢系統交流道",383,22.78458,120.42617],["九如交流道",391,22.75358,120.49157],["屏東交流道",396,22.72022,120.5251],["長治交流道",400,22.69705,120.55436],["麟洛交流道",407,22.6413,120.53927],["竹田系統交流道",415,22.57145,120.52809],["崁頂交流道",421,22.52132,120.52331],["南州交流道",424,22.49317,120.52895],["林邊交流道",430,22.44552,120.50602],["大鵬灣端",431,22.4414,120.49771]],
+"國道3甲":[["台北端",0,25.01629,121.55],["萬芳交流道",3,25.0045,121.57992],["木柵交流道",5,25.00214,121.59349],["深坑端",6,25.00202,121.59986]],
+"國道4號":[["清水端",0,24.3044,120.59126],["中港系統交流道",2,24.30745,120.61357],["神岡交流道",9,24.27788,120.66947],["台中系統交流道",11,24.27059,120.69224],["后豐交流道",14,24.27811,120.71832],["豐勢交流道",17,24.27115,120.74148],["潭子",26,24.21551,120.71776],["潭子系統",28,24.21551,120.71776]],
+"國道5號":[["南港系統交流道",0,25.03527,121.62334],["石碇交流道",4,25.00893,121.64721],["頭城交流道",30,24.82889,121.79023],["宜蘭交流道",38,24.76277,121.778],["羅東交流道",47,24.67619,121.79449],["蘇澳交流道",54,24.6252,121.80938]],
+"國道6號":[["霧峰系統交流道",0,24.02558,120.67208],["舊正交流道",3,24.01236,120.6976],["東草屯交流道",5,24.00653,120.71679],["國姓交流道",17,24.0045,120.81263],["北山交流道",25,23.97942,120.88216],["愛蘭交流道",29,23.98036,120.92348],["埔里交流道",34,23.99175,120.96538],["埔里端",37,23.98207,120.99243]],
+"國道8號":[["台南端",0,23.08047,120.19543],["新吉交流道",2,23.08988,120.21323],["台南系統交流道",6,23.07925,120.25175],["新市交流道",9,23.06569,120.27636],["新化系統交流道",14,23.06454,120.32274],["新化端",15,23.0624,120.33014]],
+"國道10號":[["左營端",0,22.68016,120.3119],["鼎金系統交流道",1,22.6752,120.32821],["仁武交流道",6,22.69651,120.35855],["燕巢交流道",13,22.75581,120.37046],["燕巢系統交流道",19,22.78433,120.42593],["嶺口交流道",22,22.79657,120.44926],["里港交流道",25,22.79903,120.47223],["旗山端",33,22.86634,120.49279]],
+"台61":[["八里一交流道",2,25.16006,121.40424],["八里二交流道",4,25.15788,121.40165],["八里二,臺北港交流道",4,25.14436,121.38284],["八里三交流道",6,25.14329,121.38029],["八里交流道",12,25.13371,121.36079],["蘆竹交流道",19,25.11678,121.281],["竹圍交流道",22,25.11182,121.24019],["沙崙交流道",24,25.10348,121.21253],["大園交流道",29,25.09526,121.19998],["草漯交流道",33,25.07574,121.15653],["桃科交流道",38,25.05891,121.10344],["觀音交流道",42,25.03962,121.07069],["永安交流道",47,25.00842,121.03128],["57新豐一交流道",57,24.92261,120.97329],["西濱交流道",90,24.69918,120.86553],["溪洲交流道",102,24.63273,120.77819],["後龍交流道",105,24.62168,120.76893],["赤土崎交流道",109,24.59507,120.73791],["白沙屯交流道",111,24.57414,120.71969],["新埔交流道",115,24.54659,120.70331],["通霄一交流道",121,24.51736,120.68644],["通宵二交流道",122,24.49723,120.67692],["通霄二交流道",122,24.50041,120.67812],["苑裡交流道",127,24.47861,120.66355],["房裡交流道",130,24.43768,120.63618],["大甲交流道",134,24.41273,120.61631],["福住交流道",136,24.40341,120.6121],["大安一交流道",139,24.38357,120.59319],["大安二交流道",144,24.33429,120.56952],["清水交流道",150,24.30131,120.55441],["梧棲交流道",154,24.26957,120.54467],["龍井交流道",157,24.23042,120.52793],["伸港交流道",166,24.17704,120.48047],["線西交流道",169,24.16066,120.46365],["洋厝交流道",174,24.11454,120.43632],["鹿港交流道",177,24.0846,120.42359],["福興交流道",180,24.06339,120.41111],["漢寶交流道",185,24.03349,120.39216],["王功交流道",192,23.98517,120.36734],["芳苑交流道",197,23.95652,120.33294],["大城交流道",208,23.88326,120.29379],["橋頭交流道",216,23.79427,120.2781],["麥寮交流道",221,23.76808,120.27136],["湖仔內交流道",224,23.7376,120.25492],["崙豐交流道",226,23.72904,120.22269],["五條港交流道",229,23.71754,120.20975],["台西交流道",233,23.70419,120.18125],["四湖交流道",238,23.66603,120.16881],["口湖交流道",247,23.61475,120.17032],["水井交流道",253,23.52416,120.18494],["鰲鼓交流道",259,23.50224,120.17198],["東石一交流道",261,23.48554,120.16983],["東石二交流道",262,23.45106,120.16564],["白水湖交流道",266,23.42587,120.16193],["布袋一交流道",270,23.41399,120.1637],["布袋二交流道",272,23.37726,120.15578],["南鯤鯓交流道",281,23.30829,120.15049],["北門交流道",283,23.28799,120.13296],["三寮灣交流道",289,23.24923,120.10908],["將軍交流道",292,23.22466,120.10393],["七股交流道",298,23.14566,120.08949],["十份交流道",305,23.11361,120.08712]],
+"台62":[["安樂端",0,25.14275,121.70315],["瑪東系統交流道",2,25.11218,121.69168],["七堵一交流道",3,25.12069,121.69736],["七堵二交流道",5,25.09907,121.69999],["大華系統交流道",6,25.1028,121.69371],["暖暖交流道",9,25.10288,121.71651],["四腳亭交流道",13,25.10087,121.75106],["瑞芳交流道",16,25.11405,121.79478],["瑞濱端",18,25.1176,121.80404]],
+"台62甲":[["中正端",0,25.13961,121.75285],["孝東交流道",3,25.13633,121.76961],["四腳亭交流道",5,25.11419,121.77536]],
+"台64":[["八里二交流道",0,25.146,121.39548],["八里交流道",1,25.13706,121.3985],["觀音山交流道",6,25.11096,121.42359],["五股一交流道",10,25.10703,121.44583],["五股二交流道",11,25.08575,121.44773],["三重交流道",14,25.06557,121.46562],["江子翠交流道",17,25.04231,121.4798],["板橋交流道",20,25.03,121.46421],["中和一交流道",23,25.01427,121.47447],["中和交流道",24,25.01088,121.4792],["中和二交流道",26,24.99924,121.48514]],
+"台65":[["五股端",0,25.05071,121.44234],["土城二交流道",0,24.96782,121.43303],["泰山交流道",1,25.05071,121.44234],["新莊一交流道",2,25.0483,121.44221],["新莊二交流道",4,25.04881,121.44222],["板橋一交流道",6,25.02292,121.44328],["板橋二交流道",8,24.99925,121.45115],["土城一交流道",11,24.99744,121.44941],["土城二交流道",12,24.96569,121.43254]],
+"台66":[["觀音一交流道",5,25.01594,121.07911],["新屋交流道",10,24.97782,121.13351],["新屋一交流道",13,24.96039,121.13699],["平鎮系統交流道",18,24.93931,121.18205],["平鎮一交流道",19,24.934,121.19365],["平鎮二交流道",20,24.92843,121.2068],["平鎮三交流道",23,24.91222,121.22723],["大溪端",27,24.89859,121.25487]],
+"台68":[["南寮端",0,24.83693,120.94594],["新竹一交流道",5,24.8341,120.95086],["新竹二交流道",7,24.81681,121.00094],["竹科交流道",9,24.8142,121.00524],["芎林交流道",15,24.78889,121.04932],["竹東一交流道",18,24.75958,121.07143],["竹東二交流道",20,24.75635,121.07363],["竹東端",23,24.72613,121.1025]],
+"台72":[["後龍端",2,24.61187,120.79179],["新港交流道",5,24.5983,120.82487],["造橋交流道",6,24.60012,120.81864],["頭屋一交流道",10,24.5914,120.8388],["頭屋二交流道",12,24.56896,120.84526],["公館交流道",15,24.54088,120.82767],["銅鑼交流道",20,24.50935,120.80263],["獅潭端",31,24.45577,120.87798]],
+"台74":[["快官交流道",0,24.09164,120.60375],["成功交流道",1,24.10053,120.61143],["高鐵台中交流道",4,24.12017,120.61973],["南屯一交流道",5,24.13199,120.62053],["南屯二交流道",7,24.14118,120.62299],["西屯一交流道",8,24.14994,120.62346],["西屯二交流道",10,24.16354,120.62924],["西屯三交流道",11,24.17496,120.63405],["北屯一交流道",13,24.19345,120.64296],["北屯二交流道",14,24.20071,120.65889],["崇德交流道",16,24.20102,120.6677],["潭子交流道",18,24.20107,120.68754],["潭子系統交流道",20,24.20025,120.71401],["松竹交流道",22,24.17117,120.72083],["太原交流道",24,24.17239,120.72084],["太平交流道",26,24.15674,120.71734],["大里一交流道",30,24.12044,120.70073],["大里二交流道",32,24.0921,120.68556],["草湖交流道",34,24.09083,120.68434],["霧峰交流道",37,24.05528,120.6848]],
+"台74甲":[["牛埔交流道",1,24.08415,120.59578]],
+"台76":[["埔鹽交流道",11,24.00701,120.49382],["埔鹽系統交流道",15,24.00223,120.49537],["埔心交流道",19,23.97028,120.53154],["員林交流道",22,23.95435,120.55018],["林厝交流道",26,23.94046,120.59157],["中興系統交流道",32,23.95615,120.65236]],
+"台78":[["台西交流道",0,23.69086,120.1818],["東勢交流道",8,23.68173,120.242],["元長交流道",15,23.68503,120.30093],["土庫交流道",22,23.68828,120.36508],["虎尾交流道",25,23.69092,120.40184],["雲林系統交流道",30,23.67899,120.44572],["斗南交流道",32,23.65853,120.46868],["古坑交流道",39,23.66214,120.51653],["古坑系統交流道",43,23.66758,120.56095]],
+"台82":[["東石端",0,23.45741,120.15142],["朴子交流道",10,23.45328,120.23042],["祥和交流道",14,23.44816,120.27801],["鹿草交流道",18,23.43201,120.29689],["嘉義系統交流道",22,23.42621,120.34922],["水上交流道",25,23.42055,120.37535],["中和交流道",30,23.4206,120.41265],["嘉義交流道",32,23.42715,120.43689],["水上系統交流道",34,23.43139,120.4639]],
+"台84":[["北門交流道",0,23.27369,120.14368],["學甲交流道",8,23.26636,120.17855],["下營系統交流道",14,23.22707,120.22294],["渡頭交流道",26,23.16488,120.34577],["官田系統交流道",27,23.16698,120.35847],["頭社交流道",32,23.13997,120.38314],["二溪交流道",35,23.14236,120.41643]],
+"台86":[["台南端",0,22.93585,120.17632],["灣裡交流道",2,22.93519,120.18327],["台南交流道",5,22.92746,120.21547],["仁德系統交流道",8,22.94381,120.24489],["上崙交流道",10,22.93834,120.25703],["大潭交流道",11,22.9321,120.27294],["歸仁交流道",16,22.94831,120.30439],["關廟交流道",18,22.97242,120.31449]],
+"台88":[["五甲系統交流道",0,22.59803,120.34165],["鳳山交流道",2,22.59218,120.34665],["大寮交流道",7,22.58908,120.39173],["大發交流道",9,22.58642,120.413],["萬丹交流道",15,22.58734,120.46276],["竹田系統交流道",21,22.56442,120.50601],["竹田端",22,22.57041,120.53659]]
+};
+const BANDS = {
+  peak: { label: '平日尖峰', factor: 1.5 },
+  day: { label: '平日離峰', factor: 1.2 },
+  holiday: { label: '假日日間', factor: 1.3 },
+  night: { label: '夜間', factor: 1 }
+};
+const FREEWAYS = {
+  '中山高速公路': '國道1號', '機場支線': '國道2號', '福爾摩沙高速公路': '國道3號',
+  '臺中環線': '國道4號', '台中環線': '國道4號', '蔣渭水高速公路': '國道5號',
+  '水沙連高速公路': '國道6號', '臺南支線': '國道8號', '台南支線': '國道8號',
+  '高雄支線': '國道10號', '五股楊梅高架道路': '國道1號', '五楊高架道路': '國道1號',
+  '汐止五股高架道路': '國道1號', '汐五高架道路': '國道1號'
+};
+const FREEWAY_REFS = ['1', '2', '3', '3甲', '4', '5', '6', '8', '10'];
+const ROUTE_COLORS = { on: '#17624f', off: '#8d9692' };
+
+const state = { start: null, end: null, routes: [], selected: 0, picking: null };
+let requestId = 0;
+
+// ---------- 定位 ----------
+function inTaiwan(lat, lng) {
+  return lat > 21.5 && lat < 26.6 && lng > 117.9 && lng < 122.5;
+}
+
+function orderCoord(a, b) {
+  const pair = Math.abs(a) > 90 || inTaiwan(b, a) ? { lat: b, lng: a } : { lat: a, lng: b };
+  return Math.abs(pair.lat) <= 90 && Math.abs(pair.lng) <= 180 ? pair : null;
+}
+
+function parseCoord(text) {
+  const m = text.match(/^\s*(-?\d{1,3}(?:\.\d+)?)\s*[,，\s]\s*(-?\d{1,3}(?:\.\d+)?)\s*$/);
+  if (m) return orderCoord(Number(m[1]), Number(m[2]));
+  const dms = [...text.matchAll(/(\d{1,3})\s*[°度]\s*(?:(\d{1,2})\s*['′’分]\s*)?(?:(\d{1,2}(?:\.\d+)?)\s*(?:["″”]|秒)\s*)?/g)];
+  if (dms.length !== 2) return null;
+  const [a, b] = dms.map(d => Number(d[1]) + Number(d[2] || 0) / 60 + Number(d[3] || 0) / 3600);
+  return orderCoord(a, b);
+}
+
+function isLandQuery(text) {
+  if (/地號|小段/.test(text)) return true;
+  return /段\s*\d+(-\d+)?$/.test(text) && !/[路街道]/.test(text);
+}
+
+// 外部服務沒有回應時不能讓畫面一直等
+async function fetchTimed(url, options, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchJson(url) {
+  const res = await fetchTimed(url, {}, 20000);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+
+function stripPostcode(text) {
+  return text.replace(/,\s*\d{3,6}\s*$/, '');
+}
+
+async function geocodeArcgis(q) {
+  const url = 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates' +
+    '?f=json&countryCode=TWN&maxLocations=6&outFields=Addr_type,Place_addr&singleLine=' + encodeURIComponent(q);
+  const data = await fetchJson(url);
+  return (data.candidates || [])
+    .filter(c => c.score >= 80 && inTaiwan(c.location.y, c.location.x))
+    .map(c => {
+      const place = c.attributes.Addr_type === 'POI' && c.attributes.Place_addr ? '（' + stripPostcode(c.attributes.Place_addr) + '）' : '';
+      return { name: stripPostcode(c.address) + place, lat: c.location.y, lng: c.location.x, fuzzy: c.score < 90 };
+    });
+}
+
+async function geocodeNominatim(q) {
+  const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=tw&limit=5&accept-language=zh-TW&q=' + encodeURIComponent(q);
+  const data = await fetchJson(url);
+  return data.map(r => ({ name: r.display_name, lat: Number(r.lat), lng: Number(r.lon), fuzzy: false }));
+}
+
+// ---------- Google ----------
+function useGoogle() {
+  return $('engine').value === 'google';
+}
+
+function googleKey() {
+  const key = $('apiKey').value.trim();
+  if (!key) throw new Error('請先輸入 Google API 金鑰。');
+  return key;
+}
+
+function countUsage(kind) {
+  const el = $(kind === 'routes' ? 'usageRoutes' : 'usageGeocode');
+  el.textContent = Number(el.textContent) + 1;
+}
+
+async function googleJson(url, options) {
+  const res = await fetch(url, options);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error('Google 服務回應錯誤：' + ((data.error && data.error.message) || 'HTTP ' + res.status));
+  return data;
+}
+
+function cleanGoogleAddress(text) {
+  return text.replace(/^\d{3,6}\s*/, '').replace(/^[台臺]灣/, '');
+}
+
+async function googleGeocodeRequest(params) {
+  countUsage('geocode');
+  const data = await googleJson('https://maps.googleapis.com/maps/api/geocode/json?language=zh-TW&region=tw&' + params + '&key=' + encodeURIComponent(googleKey()));
+  if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
+    throw new Error('Google 定位失敗：' + (data.error_message || data.status));
+  }
+  return data.results || [];
+}
+
+async function geocodeGoogle(q) {
+  const results = await googleGeocodeRequest('components=country:TW&address=' + encodeURIComponent(q));
+  return results.map(r => ({
+    name: cleanGoogleAddress(r.formatted_address),
+    lat: r.geometry.location.lat,
+    lng: r.geometry.location.lng,
+    fuzzy: !!r.partial_match
+  }));
+}
+
+function departureForGoogle() {
+  const d = departDate();
+  return d && d.getTime() > Date.now() + 60000 ? d : null;
+}
+
+// Google 的路名只出現在導航文字中，例如「向右轉走中山南路朝公園路前進」
+function roadFromInstruction(text) {
+  const head = text.replace(/^(朝|往|向)[東西南北]+方?/, '').split(/朝|前往/)[0];
+  const words = head.replace(/走|進入|沿著|沿|轉入|開上|駛入|駛出|下交流道|左轉|右轉|迴轉|靠左|靠右|繼續|直行|向|於|在|從|，|,|\s/g, ' ');
+  const roads = words.match(/國道\s*\d+甲?號?|[一-鿿]{1,10}?(?:高速公路|快速道路|快速公路|交流道|大道|路|街|橋|隧道|巷|弄)(?:[一二三四五六七八九十]+段)?(?:\d+巷)?(?:\d+弄)?/g);
+  return roads ? roads[roads.length - 1].replace(/\s/g, '') : '';
+}
+
+function normalizeGoogleRoute(r) {
+  return {
+    google: true,
+    distance: r.distanceMeters || 0,
+    duration: parseFloat(r.duration) || 0,
+    description: r.description || '',
+    geometry: r.polyline.geoJsonLinestring,
+    legs: (r.legs || []).map(leg => ({
+      steps: (leg.steps || []).map(s => ({
+        name: roadFromInstruction((s.navigationInstruction && s.navigationInstruction.instructions) || ''),
+        ref: '',
+        distance: s.distanceMeters || 0,
+        duration: parseFloat(s.staticDuration) || 0,
+        geometry: s.polyline && s.polyline.geoJsonLinestring,
+        intersections: []
+      }))
+    }))
+  };
+}
+
+async function googleRoutes(points, alternatives) {
+  const mode = MODES[$('mode').value];
+  const toWaypoint = p => ({ location: { latLng: { latitude: p.lat, longitude: p.lng } } });
+  const body = {
+    origin: toWaypoint(points[0]),
+    destination: toWaypoint(points[points.length - 1]),
+    travelMode: mode.googleMode,
+    languageCode: 'zh-TW',
+    regionCode: 'TW',
+    units: 'METRIC',
+    polylineEncoding: 'GEO_JSON_LINESTRING'
+  };
+  if (points.length > 2) body.intermediates = points.slice(1, -1).map(p => ({ ...toWaypoint(p), via: true }));
+  else if (alternatives) body.computeAlternativeRoutes = true;
+  if (mode.googleMode === 'DRIVE') {
+    body.routingPreference = 'TRAFFIC_AWARE';
+    const depart = departureForGoogle();
+    if (depart) body.departureTime = depart.toISOString();
+  }
+  countUsage('routes');
+  const data = await googleJson('https://routes.googleapis.com/directions/v2:computeRoutes', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': googleKey(),
+      'X-Goog-FieldMask': 'routes.distanceMeters,routes.duration,routes.description,routes.polyline.geoJsonLinestring,routes.legs.steps.distanceMeters,routes.legs.steps.staticDuration,routes.legs.steps.polyline,routes.legs.steps.navigationInstruction.instructions'
+    },
+    body: JSON.stringify(body)
+  });
+  if (!data.routes || !data.routes.length) throw new Error('兩點間找不到可行路線，請確認位置或改選交通方式。');
+  return data.routes.map(normalizeGoogleRoute);
+}
+
+async function geocode(q) {
+  let list = [];
+  if (useGoogle()) {
+    list = await geocodeGoogle(q);
+  } else {
+    try { list = await geocodeArcgis(q); } catch (e) { /* 改用備援服務 */ }
+    if (!list.length) list = await geocodeNominatim(q);
+  }
+  // 同一地點可能重複回傳，距離相近者只留一筆
+  return list.filter((c, i) => !list.slice(0, i).some(o => Math.abs(o.lat - c.lat) + Math.abs(o.lng - c.lng) < 0.0005));
+}
+
+async function reverseGeocode(lat, lng) {
+  try {
+    if (useGoogle()) {
+      const results = await googleGeocodeRequest('latlng=' + lat + ',' + lng);
+      if (results.length) return cleanGoogleAddress(results[0].formatted_address);
+      return lat.toFixed(5) + ', ' + lng.toFixed(5);
+    }
+    const data = await fetchJson('https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/reverseGeocode?f=json&langCode=zh&featureTypes=PointAddress,StreetAddress,StreetName&location=' + lng + ',' + lat);
+    if (data.address && data.address.Match_addr) return stripPostcode(data.address.Match_addr);
+  } catch (e) { /* 查不到地址時用座標 */ }
+  return lat.toFixed(5) + ', ' + lng.toFixed(5);
+}
+
+async function landSection(lat, lng) {
+  try {
+    const res = await fetchTimed('https://api.nlsc.gov.tw/other/TownVillagePointQuery/' + lng + '/' + lat + '/4326', {}, 5000);
+    const xml = new DOMParser().parseFromString(await res.text(), 'application/xml');
+    const read = tag => (xml.querySelector(tag) || {}).textContent || '';
+    return read('sectName') ? read('townName') + read('sectName') : '';
+  } catch (e) {
+    return '';
+  }
+}
+
+async function placeInfo(lat, lng) {
+  const [address, section] = await Promise.all([reverseGeocode(lat, lng), landSection(lat, lng)]);
+  return { address, section };
+}
+
+function showCandidates(key) {
+  const point = state[key], sel = $(key + 'Cand');
+  sel.replaceChildren();
+  const list = point ? point.candidates : [];
+  sel.hidden = list.length < 2;
+  list.forEach((c, i) => {
+    const opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = c.name;
+    sel.append(opt);
+  });
+  if (point) sel.value = point.index;
+}
+
+async function resolvePoint(key, label) {
+  const text = $(key + 'Input').value.trim();
+  if (!text) throw new Error('請輸入' + label + '。');
+  if (state[key] && state[key].query === text) return;
+  const coord = parseCoord(text);
+  let candidates;
+  if (coord) {
+    const info = await placeInfo(coord.lat, coord.lng);
+    const extra = [info.address, info.section].filter(v => v && !parseCoord(v)).join('，');
+    candidates = [{ name: text + (extra ? '（' + extra + '）' : ''), lat: coord.lat, lng: coord.lng, fuzzy: false }];
+  } else if (isLandQuery(text)) {
+    throw new Error(label + '「' + text + '」是地段地號，內政部地號查詢需另行申請，無法直接搜尋。請到國土測繪圖資服務雲定位後，用地圖選點或貼上經緯度。');
+  } else {
+    candidates = await geocode(text);
+  }
+  if (!candidates.length) throw new Error('找不到' + label + '「' + text + '」。可改輸入路名與地標、貼上經緯度，或用地圖選點。');
+  state[key] = { query: text, candidates, index: 0 };
+  showCandidates(key);
+}
+
+function current(key) {
+  const p = state[key];
+  return p.candidates[p.index];
+}
+
+function pointText(key) {
+  const p = state[key], c = current(key);
+  if (c.name.includes(p.query)) return c.name;
+  const place = c.name.match(/（(.+)）$/);
+  return p.query + '（' + (place ? place[1] : c.name) + '）';
+}
+
+// ---------- 路線 ----------
+async function fetchRoutes(points, alternatives) {
+  if (useGoogle()) return googleRoutes(points, alternatives);
+  const coords = points.map(p => p.lng + ',' + p.lat).join(';');
+  const url = 'https://routing.openstreetmap.de/' + MODES[$('mode').value].osrm + '/route/v1/driving/' + coords +
+    '?overview=full&geometries=geojson&steps=true&alternatives=' + alternatives;
+  const data = await fetchJson(url);
+  if (data.code !== 'Ok' || !data.routes.length) throw new Error('兩點間找不到可行路線，請確認位置或改選交通方式。');
+  return data.routes;
+}
+
+function isDifferentRoute(a, b) {
+  if (roadChain(a, 'main') !== roadChain(b, 'main')) return true;
+  // Google 路名由導航文字解析，名稱相同時再比距離
+  return !!a.google && Math.abs(a.distance - b.distance) / a.distance > 0.01;
+}
+
+// 路線服務只回一條時，從中點往兩側繞行，找次快的不同路線
+async function findDetour(base) {
+  const a = current('start'), b = current('end');
+  const mid = { lat: (a.lat + b.lat) / 2, lng: (a.lng + b.lng) / 2 };
+  const scale = Math.cos(mid.lat * Math.PI / 180);
+  const dx = (b.lng - a.lng) * scale, dy = b.lat - a.lat;
+  for (const reach of [0.15, 0.3]) {
+    const options = [];
+    for (const side of [1, -1]) {
+      const via = { lat: mid.lat + side * dx * reach, lng: mid.lng - side * dy * reach / scale };
+      try {
+        const [route] = await fetchRoutes([a, via, b], false);
+        if (isDifferentRoute(base, route) && route.duration < base.duration * 1.8) {
+          route.vias = [via];
+          options.push(route);
+        }
+      } catch (e) { /* 這一側沒有路線就略過 */ }
+    }
+    options.sort((x, y) => x.duration - y.duration);
+    if (options.length) return options[0];
+  }
+  return null;
+}
+
+// 路線中段的巷弄；起訖點本身在巷弄內時，頭尾那段無法避開，不計入
+function middleAlleys(route) {
+  const steps = routeSteps(route), isAlley = s => /巷|弄/.test(s.name || '');
+  const isMainRoad = s => !!s.name && !isAlley(s) && !isDirectionLabel(s.name);
+  const first = steps.findIndex(isMainRoad);
+  if (first < 0) return { meters: 0, names: [] };
+  const last = steps.length - 1 - [...steps].reverse().findIndex(isMainRoad);
+  const middle = steps.slice(first, last + 1).filter(isAlley);
+  return { meters: middle.reduce((sum, s) => sum + s.distance, 0), names: [...new Set(middle.map(s => s.name))] };
+}
+
+function hasMiddleAlley(route) {
+  return middleAlleys(route).meters > 50;
+}
+
+// 沒有經過巷弄的路線優先，其次才比時間
+function preferWideRoads(x, y) {
+  return hasMiddleAlley(x) - hasMiddleAlley(y) || x.duration - y.duration;
+}
+
+async function streetCorner(roadA, roadB, near) {
+  const url = 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?f=json&countryCode=TWN&maxLocations=4&outFields=Addr_type' +
+    '&location=' + near[0] + ',' + near[1] + '&singleLine=' + encodeURIComponent(roadA + ' & ' + roadB);
+  const data = await fetchJson(url);
+  const reach = c => meters([c.location.x, c.location.y], near);
+  const corners = (data.candidates || []).filter(c => c.attributes.Addr_type === 'StreetInt' && c.score >= 90 && reach(c) < 3000);
+  corners.sort((a, b) => reach(a) - reach(b));
+  return corners.length ? { lat: corners[0].location.y, lng: corners[0].location.x } : null;
+}
+
+// 路線抄進巷子時，前後兩條大路的路口才是走大路會經過的地方
+function alleyGaps(route) {
+  const steps = routeSteps(route), gaps = [];
+  const isAlley = s => /巷|弄/.test(s.name || '');
+  steps.forEach((s, i) => {
+    if (!isAlley(s) || (i > 0 && isAlley(steps[i - 1]))) return;
+    let j = i;
+    while (j + 1 < steps.length && isAlley(steps[j + 1])) j++;
+    const before = steps.slice(0, i).reverse().find(o => o.name && !isDirectionLabel(o.name));
+    const after = steps.slice(j + 1).find(o => o.name && !isDirectionLabel(o.name));
+    if (before && after && before.name !== after.name && s.geometry) gaps.push({ roadA: before.name, roadB: after.name, near: s.geometry.coordinates[0] });
+  });
+  return gaps;
+}
+
+// 路線服務無法指定避開巷弄，所以把大路的路口加為途經點重算，巷弄有減少才採用
+async function widenRoute(route) {
+  let best = route;
+  for (let round = 0; round < 3 && hasMiddleAlley(best); round++) {
+    const vias = [...best.vias];
+    for (const gap of alleyGaps(best).slice(0, 4)) {
+      const via = await streetCorner(gap.roadA, gap.roadB, gap.near).catch(() => null);
+      if (via && !vias.some(v => meters([v.lng, v.lat], [via.lng, via.lat]) < 30)) vias.push(via);
+    }
+    if (vias.length === best.vias.length) break;
+    const line = best.geometry.coordinates;
+    vias.sort((a, b) => nearestIndex(line, a) - nearestIndex(line, b));
+    const [next] = await fetchRoutes([current('start'), ...vias, current('end')], false);
+    next.vias = vias;
+    const improved = middleAlleys(next).meters < middleAlleys(best).meters * 0.7;
+    if (!improved || next.duration > route.duration * 1.6 + 120) break;
+    best = next;
+  }
+  return best;
+}
+
+async function fastestTwo() {
+  const list = await fetchRoutes([current('start'), current('end')], true);
+  list.forEach(r => { r.vias = []; });
+  list.sort(preferWideRoads);
+  if (!useGoogle() && hasMiddleAlley(list[0])) {
+    const wider = await widenRoute(list[0]).catch(() => list[0]);
+    if (wider !== list[0]) list.push(wider);
+    list.sort(preferWideRoads);
+  }
+  let other = list.slice(1).find(r => isDifferentRoute(list[0], r));
+  if (!other || hasMiddleAlley(list[0])) {
+    const detour = await findDetour(list[0]);
+    if (detour) list.push(detour);
+    list.sort(preferWideRoads);
+    other = list.slice(1).find(r => isDifferentRoute(list[0], r));
+  }
+  return other ? [list[0], other] : [list[0]];
+}
+
+function freewayOf(step) {
+  if (FREEWAYS[step.name]) return FREEWAYS[step.name];
+  const named = (step.name || '').match(/國道\s*(\d+甲?)號?/);
+  if (named) return '國道' + named[1] + '號';
+  const isMotorway = (step.intersections || []).some(i => (i.classes || []).includes('motorway'));
+  if (!isMotorway || !step.ref) return '';
+  const ref = step.ref.split(';').map(r => r.trim().replace(/^國道/, '').replace(/號$/, '')).find(r => FREEWAY_REFS.includes(r));
+  return ref ? '國道' + ref + '號' : '';
+}
+
+// 匝道上的方向指示，例如「(往新北環快、堤外道路)」，不是路名
+function isDirectionLabel(name) {
+  return /^[(（]/.test(name || '');
+}
+
+function fullLabel(step) {
+  const freeway = freewayOf(step);
+  if (freeway) return step.name && step.name !== freeway ? freeway + '（' + step.name + '）' : freeway;
+  if (isDirectionLabel(step.name)) return '';
+  if (step.name) return step.name;
+  return step.ref ? '編號' + step.ref.split(';')[0].trim() + '道路' : '';
+}
+
+// 主要幹道：去掉「段」，略過巷弄
+function mainLabel(step) {
+  const freeway = freewayOf(step);
+  if (freeway) return freeway;
+  if (!step.name || isDirectionLabel(step.name) || /巷|弄/.test(step.name)) return '';
+  return step.name.replace(/[一二三四五六七八九十\d]+段$/, '');
+}
+
+function mergeRoads(list) {
+  const out = [];
+  list.forEach(r => {
+    const last = out[out.length - 1];
+    if (last && last.label === r.label) last.distance += r.distance;
+    else out.push({ label: r.label, distance: r.distance });
+  });
+  return out;
+}
+
+function routeSteps(route) {
+  return route.legs.flatMap(l => l.steps).filter(s => s.distance > 0);
+}
+
+function roadChain(route, detail) {
+  const chain = chainFromParts(routeSteps(route).map(step => ({ step, distance: step.distance })), detail, route.distance);
+  return chain.named ? chain.text : route.description || chain.text;
+}
+
+function chainFromParts(parts, detail, totalDistance) {
+  const main = detail === 'main';
+  const named = parts.map(p => ({ label: (main ? mainLabel : fullLabel)(p.step), distance: p.distance }));
+  const roads = mergeRoads(main ? named.filter(r => r.label) : named);
+  const floor = Math.min(main ? 1000 : 300, totalDistance * 0.1);
+  const kept = roads.filter((r, i) => {
+    if (!r.label) return r.distance >= floor;
+    if (!main) return true;
+    return i === 0 || i === roads.length - 1 || r.distance >= floor || r.label.includes('國道') || r.label.includes('交流道');
+  }).map(r => ({ label: r.label || '未命名道路', distance: r.distance }));
+  const merged = mergeRoads(kept);
+  return {
+    text: merged.map(r => r.label).join(' → '),
+    named: merged.some(r => r.label !== '未命名道路')
+  };
+}
+
+// ---------- 路段明細與時間 ----------
+function positiveNumber(id, fallback) {
+  const value = Number($(id).value);
+  return value > 0 ? value : fallback;
+}
+
+function highwayOf(step) {
+  const name = step.name || '';
+  if (/交流道/.test(name)) return null;
+  const freeway = freewayOf(step);
+  if (freeway) return { type: 'freeway', key: freeway.replace(/甲號$/, '甲'), label: freeway };
+  const refs = (step.ref || '').split(';').map(r => r.trim().replace(/^[台臺]/, '').replace(/線$/, ''));
+  const byRef = refs.map(r => '台' + r).find(k => KM_POSTS[k]);
+  const isMotorway = (step.intersections || []).some(i => (i.classes || []).includes('motorway'));
+  const lineNumber = name.match(/^[台臺](\d+甲?)線/);
+  const byLine = lineNumber && KM_POSTS['台' + lineNumber[1]] ? '台' + lineNumber[1] : '';
+  const byName = Object.keys(EXPRESS_NAMES).find(k => name.includes(k));
+  const isExpressName = !isDirectionLabel(name) && (/快速公路|快速道路|環東大道/.test(name) || !!byName || !!byLine);
+  if (!isExpressName && !(isMotorway && byRef)) return null;
+  const key = byRef || byLine || (byName && EXPRESS_NAMES[byName]) || name;
+  return { type: 'express', key, label: KM_POSTS[key] ? key : name };
+}
+
+function findPost(posts, rampName, point) {
+  if (!posts || !point) return null;
+  const norm = s => s.replace(/臺/g, '台');
+  const reach = p => meters([p[3], p[2]], point);
+  const nearest = list => list.reduce((best, p) => !best || reach(p) < reach(best) ? p : best, null);
+  const named = rampName ? posts.filter(p => norm(p[0]) === norm(rampName)) : [];
+  if (named.length) return nearest(named);
+  const close = nearest(posts);
+  return close && reach(close) <= 5000 ? close : null;
+}
+
+function isRamp(step) {
+  return !!step && /交流道/.test(step.name || '');
+}
+
+// 國道、快速道路：距離取上下交流道 K 數差（查不到才用路線長度），時間＝公里×分／公里；一般道路：沿用路線服務的時間
+function routePlan(route) {
+  const steps = routeSteps(route), mode = MODES[$('mode').value];
+  const staticTotal = steps.reduce((sum, s) => sum + (s.duration || 0), 0);
+  const scale = route.google ? (staticTotal > 0 ? route.duration / staticTotal : 0) : timeFactor();
+  const rates = { freeway: positiveNumber('freewayRate', 0.6), express: positiveNumber('expressRate', 0.8) };
+  const rows = [];
+  const pushRoad = (label, distance, seconds) => {
+    const last = rows[rows.length - 1];
+    if (last && last.type === 'general' && (last.label === label || !label)) {
+      last.distance += distance;
+      last.seconds += seconds;
+    } else {
+      rows.push({ type: 'general', label: label || '未命名道路', distance, seconds });
+    }
+  };
+  steps.forEach(s => { s.planDistance = s.distance; s.planSeconds = (s.duration || 0) * scale; s.absorbed = false; });
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i], road = mode.traffic ? highwayOf(step) : null;
+    if (!road) continue;
+    let j = i;
+    while (j + 1 < steps.length) {
+      const next = highwayOf(steps[j + 1]), after = steps[j + 2] && highwayOf(steps[j + 2]);
+      if (next && next.key === road.key) j++;
+      else if (!steps[j + 1].name && steps[j + 1].distance < 1000 && after && after.key === road.key) j += 2;
+      else break;
+    }
+    const group = steps.slice(i, j + 1), routeMeters = group.reduce((sum, s) => sum + s.distance, 0);
+    const coordsOf = s => (s.geometry && s.geometry.coordinates) || [];
+    const posts = KM_POSTS[road.key];
+    // 交流道與主線之間可能隔著橋或短路段，往前後多找幾段
+    const nearbyRamp = direction => {
+      let walked = 0;
+      for (let k = (direction < 0 ? i : j) + direction, n = 0; k >= 0 && k < steps.length && n < 3; k += direction, n++) {
+        if (isRamp(steps[k])) return k;
+        walked += steps[k].distance;
+        if (walked > 3000) break;
+      }
+      return -1;
+    };
+    const rampIn = nearbyRamp(-1), rampOut = nearbyRamp(1);
+    const from = findPost(posts, rampIn >= 0 ? steps[rampIn].name : '', coordsOf(step)[0]);
+    const lastCoords = coordsOf(steps[j]);
+    const to = findPost(posts, rampOut >= 0 ? steps[rampOut].name : '', lastCoords[lastCoords.length - 1]);
+    const exact = !!from && !!to && from[1] !== to[1];
+    const distance = exact ? Math.abs(from[1] - to[1]) * 1000 : routeMeters;
+    const seconds = distance / 1000 * rates[road.type] * 60;
+    group.forEach(s => {
+      const share = routeMeters > 0 ? s.distance / routeMeters : 1 / group.length;
+      s.planDistance = distance * share;
+      s.planSeconds = seconds * share;
+    });
+    if (exact) {
+      // 匝道里程已含在 K 數差內，不重複計算
+      let k = rampIn >= 0 ? rampIn : i;
+      while (k > 0 && isRamp(steps[k - 1])) k--;
+      for (; k < i; k++) steps[k].absorbed = true;
+      k = rampOut >= 0 ? rampOut : j;
+      while (k + 1 < steps.length && isRamp(steps[k + 1])) k++;
+      for (; k > j; k--) steps[k].absorbed = true;
+    }
+    group[0].highwayRow = {
+      type: road.type,
+      name: road.label,
+      label: road.label + (exact ? '：' + from[0] + '（' + from[1] + 'K）→ ' + to[0] + '（' + to[1] + 'K）' : posts ? '（查無 K 數，依路線長度）' : ''),
+      distance,
+      seconds,
+      rate: rates[road.type]
+    };
+    group.slice(1).forEach(s => { s.highwayRow = null; s.inHighway = true; });
+    group[0].inHighway = true;
+    i = j;
+  }
+  steps.forEach(s => {
+    if (s.absorbed && !s.inHighway) {
+      s.planDistance = 0;
+      s.planSeconds = 0;
+      return;
+    }
+    if (s.highwayRow) rows.push(s.highwayRow);
+    else if (!s.inHighway) pushRoad(fullLabel(s), s.planDistance, s.planSeconds);
+  });
+  steps.forEach(s => { s.highwayRow = null; s.inHighway = false; });
+  return {
+    rows,
+    distance: rows.reduce((sum, r) => sum + r.distance, 0),
+    seconds: rows.reduce((sum, r) => sum + r.seconds, 0)
+  };
+}
+
+// 累計後再四捨五入，讓各列分鐘數加總等於總時間
+function rowMinutes(rows, secondsOf) {
+  let elapsed = 0;
+  return rows.map(row => {
+    const before = Math.round(elapsed / 60);
+    elapsed += secondsOf(row);
+    return Math.round(elapsed / 60) - before;
+  });
+}
+
+function segmentLines(route) {
+  const plan = routePlan(route), minutes = rowMinutes(plan.rows, r => r.seconds);
+  return plan.rows.map((r, i) => {
+    const rate = r.rate ? '（每公里 ' + r.rate + ' 分）' : '';
+    return (i + 1) + '. ' + r.label + '：' + formatDistance(r.distance) + '、' + formatMinutes(minutes[i]) + rate;
+  });
+}
+
+function highwayNames(route, type) {
+  return [...new Set(routePlan(route).rows.filter(r => r.type === type).map(r => r.name))];
+}
+
+function renderSegments() {
+  const box = $('segmentBox'), route = state.routes[state.selected];
+  box.replaceChildren();
+  if (!route) return;
+  const plan = routePlan(route);
+  const title = document.createElement('h2');
+  title.textContent = '路段明細';
+  box.append(title);
+  segmentLines(route).forEach(line => {
+    const item = document.createElement('div');
+    item.className = 'county';
+    item.textContent = line;
+    box.append(item);
+  });
+  const total = document.createElement('div');
+  total.className = 'county';
+  const strong = document.createElement('b');
+  strong.textContent = '總計：' + formatDistance(plan.distance) + '、約 ' + formatDuration(plan.seconds);
+  total.append(strong);
+  box.append(total);
+}
+
+// ---------- 分縣市 ----------
+const countyCache = new Map();
+
+function meters(a, b) {
+  const rad = Math.PI / 180;
+  const x = (b[0] - a[0]) * rad * Math.cos((a[1] + b[1]) / 2 * rad), y = (b[1] - a[1]) * rad;
+  return Math.hypot(x, y) * 6371000;
+}
+
+function pointCounty(lat, lng) {
+  const key = lat.toFixed(4) + ',' + lng.toFixed(4);
+  if (!countyCache.has(key)) {
+    countyCache.set(key, fetchTimed('https://api.nlsc.gov.tw/other/TownVillagePointQuery/' + lng + '/' + lat + '/4326', {}, 6000)
+      .then(res => res.text())
+      .then(text => {
+        const el = new DOMParser().parseFromString(text, 'application/xml').querySelector('ctyName');
+        return el ? el.textContent : '';
+      })
+      .catch(() => {
+        countyCache.delete(key);
+        return '';
+      }));
+  }
+  return countyCache.get(key);
+}
+
+function pointAlong(vertices, d) {
+  let i = 1;
+  while (i < vertices.length - 1 && vertices[i].d < d) i++;
+  const a = vertices[i - 1], b = vertices[i];
+  const t = b.d > a.d ? Math.min(1, Math.max(0, (d - a.d) / (b.d - a.d))) : 0;
+  return { lat: a.c[1] + (b.c[1] - a.c[1]) * t, lng: a.c[0] + (b.c[0] - a.c[0]) * t };
+}
+
+async function countyAt(vertices, d) {
+  const p = pointAlong(vertices, d);
+  return pointCounty(p.lat, p.lng);
+}
+
+// 沿路取樣查縣市，遇到縣市改變再對半細查，找出邊界位置
+async function countySegments(route) {
+  const steps = routeSteps(route);
+  if (!steps.length || steps.some(s => !s.geometry || s.geometry.coordinates.length < 2)) return null;
+  const vertices = [];
+  let d = 0;
+  const pieces = steps.map(step => {
+    const coords = step.geometry.coordinates, from = d;
+    coords.forEach((c, i) => {
+      if (i > 0) d += meters(coords[i - 1], c);
+      vertices.push({ c, d });
+    });
+    return { step, from, to: d };
+  });
+  const total = d;
+  if (total <= 0) return null;
+  const spacing = Math.min(5000, Math.max(1000, total / 60));
+  const stops = [];
+  for (let at = 0; at < total; at += spacing) stops.push(at);
+  stops.push(total);
+  const names = [];
+  for (let i = 0; i < stops.length; i += 6) {
+    names.push(...await Promise.all(stops.slice(i, i + 6).map(at => countyAt(vertices, at))));
+    if (i === 0 && !names.some(Boolean)) return null;
+  }
+  if (!names.some(Boolean)) return null;
+  // 河面、橋上等查不到縣市的點，沿用前後最近的結果
+  names.forEach((n, i) => { if (!n && i > 0) names[i] = names[i - 1]; });
+  for (let i = names.length - 2; i >= 0; i--) if (!names[i]) names[i] = names[i + 1];
+
+  const ranges = [{ county: names[0], from: 0, to: total }];
+  for (let i = 1; i < stops.length; i++) {
+    if (names[i] === names[i - 1]) continue;
+    let lo = stops[i - 1], hi = stops[i];
+    while (hi - lo > 200) {
+      const mid = (lo + hi) / 2, name = await countyAt(vertices, mid);
+      if (name && name !== names[i - 1]) hi = mid;
+      else lo = mid;
+    }
+    ranges[ranges.length - 1].to = hi;
+    ranges.push({ county: names[i], from: hi, to: total });
+  }
+  // 沿著縣界行駛時會短暫跨界，太短的片段併入前一段
+  const merged = [];
+  ranges.forEach(r => {
+    const last = merged[merged.length - 1];
+    if (last && (r.to - r.from < 300 || last.county === r.county)) last.to = r.to;
+    else merged.push({ ...r });
+  });
+  return merged.map(r => {
+    const parts = [];
+    pieces.forEach(p => {
+      const overlap = Math.min(p.to, r.to) - Math.max(p.from, r.from);
+      if (overlap <= 0 || p.to <= p.from) return;
+      parts.push({ step: p.step, share: overlap / (p.to - p.from) });
+    });
+    return { county: r.county, parts };
+  });
+}
+
+function loadCounties(route) {
+  if (route.countyStatus) return;
+  route.countyStatus = 'loading';
+  countySegments(route)
+    .catch(() => null)
+    .then(segments => {
+      route.counties = segments;
+      route.countyStatus = 'done';
+      if (state.routes[state.selected] !== route) return;
+      renderCounties();
+      buildText();
+    });
+}
+
+function countyRows(route, detail) {
+  routePlan(route);
+  const rows = route.counties.map(c => {
+    const parts = c.parts.map(p => ({ step: p.step, distance: p.step.planDistance * p.share }));
+    return {
+      county: c.county,
+      parts,
+      meters: parts.reduce((sum, p) => sum + p.distance, 0),
+      seconds: c.parts.reduce((sum, p) => sum + p.step.planSeconds * p.share, 0)
+    };
+  });
+  const minutes = rowMinutes(rows, r => r.seconds);
+  return rows.map((r, i) => ({
+    county: r.county,
+    distance: formatDistance(r.meters),
+    time: formatMinutes(minutes[i]),
+    roads: chainFromParts(r.parts, detail, r.meters).text
+  }));
+}
+
+function formatMinutes(min) {
+  if (min < 1) return '不到 1 分鐘';
+  if (min < 60) return min + ' 分鐘';
+  return Math.floor(min / 60) + ' 小時' + (min % 60 ? ' ' + (min % 60) + ' 分鐘' : '');
+}
+
+function isMultiCounty(route) {
+  return !!route.counties && route.counties.length > 1;
+}
+
+function renderCounties() {
+  const box = $('countyBox'), route = state.routes[state.selected];
+  box.replaceChildren();
+  box.hidden = !route;
+  if (!route) return;
+  const title = document.createElement('h2');
+  title.textContent = '分縣市路段';
+  box.append(title);
+  if (route.countyStatus !== 'done' || isMultiCounty(route)) {
+    if (route.countyStatus !== 'done') {
+      const wait = document.createElement('p');
+      wait.className = 'hint';
+      wait.textContent = '正在計算各縣市路段…';
+      box.append(wait);
+      return;
+    }
+    countyRows(route, 'main').forEach(row => {
+      const item = document.createElement('div');
+      item.className = 'county';
+      const head = document.createElement('b');
+      head.textContent = row.county + '：約 ' + row.distance + '、約 ' + row.time;
+      const roads = document.createElement('span');
+      roads.textContent = row.roads;
+      item.append(head, roads);
+      box.append(item);
+    });
+    return;
+  }
+  const note = document.createElement('p');
+  note.className = 'hint';
+  note.textContent = route.counties ? '全程都在' + route.counties[0].county + '，沒有跨縣市。' : '暫時無法取得縣市資料，請稍後重新評估。';
+  box.append(note);
+}
+
+function freewaySummary(route) {
+  const steps = routeSteps(route);
+  const codes = steps.map(freewayOf);
+  const first = codes.findIndex(Boolean);
+  if (first < 0) return '無';
+  const last = codes.length - 1 - [...codes].reverse().findIndex(Boolean);
+  const names = codes.filter((c, i) => c && codes.indexOf(c) === i);
+  const entry = steps.slice(0, first).reverse().find(s => /交流道/.test(s.name || ''));
+  const exit = steps.slice(last + 1).find(s => /交流道/.test(s.name || ''));
+  const ramps = [entry && entry.name + '上', exit && exit.name + '下'].filter(Boolean).join('、');
+  return names.join('、') + (ramps ? '（' + ramps + '）' : '');
+}
+
+function formatDistance(m) {
+  return m >= 1000 ? (m / 1000).toFixed(1) + ' 公里' : Math.round(m / 10) * 10 + ' 公尺';
+}
+
+function formatDuration(sec) {
+  const min = Math.max(1, Math.round(sec / 60));
+  if (min < 60) return min + ' 分鐘';
+  return Math.floor(min / 60) + ' 小時' + (min % 60 ? ' ' + (min % 60) + ' 分鐘' : '');
+}
+
+function pad(n) {
+  return String(n).padStart(2, '0');
+}
+
+function formatDate(d) {
+  return d.getFullYear() + '/' + pad(d.getMonth() + 1) + '/' + pad(d.getDate());
+}
+
+function formatTime(d) {
+  return pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+// ---------- 時段 ----------
+function departDate() {
+  const d = new Date($('depart').value);
+  return isNaN(d) ? null : d;
+}
+
+function bandOf(d) {
+  const hour = d.getHours(), weekend = d.getDay() === 0 || d.getDay() === 6;
+  if (hour >= 22 || hour < 6) return 'night';
+  if (weekend) return 'holiday';
+  return (hour >= 7 && hour < 9) || (hour >= 17 && hour < 19) ? 'peak' : 'day';
+}
+
+function timeFactor() {
+  if (!MODES[$('mode').value].traffic) return 1;
+  const f = Number($('factor').value);
+  return f >= 1 ? f : 1;
+}
+
+function travelSeconds(route) {
+  return routePlan(route).seconds;
+}
+
+function travelDistance(route) {
+  return routePlan(route).distance;
+}
+
+function timeNote(route) {
+  if (!MODES[$('mode').value].traffic) return '';
+  const rates = '國道每公里 ' + positiveNumber('freewayRate', 0.6) + ' 分、快速道路每公里 ' + positiveNumber('expressRate', 0.8) + ' 分';
+  return '（' + rates + '；一般道路' + (route.google ? '依 Google 路況' : '依時段係數 ' + timeFactor() + '，非即時路況') + '）';
+}
+
+function shownDeparture() {
+  return useGoogle() ? departureForGoogle() || new Date() : departDate();
+}
+
+function applyBand(key) {
+  $('band').value = key;
+  $('factor').value = BANDS[key].factor;
+}
+
+function setDepartNow() {
+  const d = new Date();
+  $('depart').value = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  applyBand(bandOf(d));
+}
+
+// ---------- 輸出 ----------
+function buildText() {
+  if (!state.routes.length) return;
+  const mode = MODES[$('mode').value], detail = $('detail').value;
+  const route = state.routes[state.selected];
+  const seconds = travelSeconds(route), depart = shownDeparture();
+  const lines = [
+    '起點：' + pointText('start'),
+    '終點：' + pointText('end'),
+    '交通方式：' + mode.label
+  ];
+  if (mode.traffic && depart) lines.push('預計出發：' + formatDate(depart) + ' ' + formatTime(depart) + (route.google ? '' : '（' + BANDS[$('band').value].label + '）'));
+  lines.push('移動距離：約 ' + formatDistance(travelDistance(route)));
+  lines.push('預估時間：約 ' + formatDuration(seconds) + timeNote(route));
+  if (mode.traffic && depart) lines.push('預估抵達：約 ' + formatArrival(depart, seconds));
+  if (mode.traffic) lines.push('行經國道：' + freewaySummary(route));
+  if (mode.traffic) lines.push('行經快速道路：' + (highwayNames(route, 'express').join('、') || '無'));
+  lines.push('建議路線：' + roadChain(route, detail));
+  const alleys = middleAlleys(route);
+  if (alleys.meters > 50) lines.push('巷弄提醒：路線中段仍經過 ' + alleys.names.join('、'));
+  if ($('withSegments').checked) {
+    lines.push('路段明細：');
+    lines.push(...segmentLines(route));
+    lines.push('總計：' + formatDistance(travelDistance(route)) + '、約 ' + formatDuration(seconds));
+  }
+  if ($('withCounty').checked && isMultiCounty(route)) {
+    lines.push('分縣市評估：');
+    countyRows(route, detail).forEach(row => {
+      lines.push('・' + row.county + '：約 ' + row.distance + '、約 ' + row.time + '；行經 ' + row.roads);
+    });
+  }
+  if ($('withAlt').checked) {
+    state.routes.forEach((r, i) => {
+      if (i === state.selected) return;
+      lines.push('備案路線：約 ' + formatDistance(travelDistance(r)) + '、約 ' + formatDuration(travelSeconds(r)) + '，' + roadChain(r, detail));
+    });
+  }
+  lines.push('評估日期：' + formatDate(new Date()));
+  $('output').value = lines.join('\n');
+  $('copyMsg').textContent = '';
+}
+
+function formatArrival(depart, seconds) {
+  const arrive = new Date(depart.getTime() + seconds * 1000);
+  const sameDay = formatDate(arrive) === formatDate(depart);
+  return (sameDay ? '' : formatDate(arrive) + ' ') + formatTime(arrive);
+}
+
+function renderRoutes() {
+  const box = $('routes');
+  box.replaceChildren();
+  state.routes.forEach((r, i) => {
+    const label = document.createElement('label');
+    label.className = 'route' + (i === state.selected ? ' on' : '');
+    const radio = document.createElement('input');
+    radio.type = 'radio'; radio.name = 'route'; radio.checked = i === state.selected;
+    radio.addEventListener('change', () => selectRoute(i));
+    const body = document.createElement('div');
+    const title = document.createElement('b');
+    const tag = r.baseRoute ? '（已手動調整）' : i === 0 ? '（建議）' : '（備案）';
+    title.textContent = '路線' + '一二'[i] + tag + '：' + formatDistance(travelDistance(r)) + '／' + formatDuration(travelSeconds(r));
+    const sub = document.createElement('span');
+    sub.textContent = roadChain(r, 'main');
+    body.append(title, sub);
+    label.append(radio, body);
+    box.append(label);
+  });
+  const route = state.routes[state.selected];
+  updateRouteEdit();
+  if (state.textRoute !== route) {
+    state.textRoute = route;
+    $('routeText').value = roadChain(route, 'main');
+  }
+  loadCounties(route);
+  renderSegments();
+  renderCounties();
+  const a = current('start'), b = current('end');
+  $('gmap').href = 'https://www.google.com/maps/dir/?api=1&origin=' + a.lat + ',' + a.lng +
+    '&destination=' + b.lat + ',' + b.lng + '&travelmode=' + MODES[$('mode').value].google;
+}
+
+function selectRoute(i) {
+  state.selected = i;
+  renderRoutes();
+  buildText();
+  drawMap(false);
+}
+
+// ---------- 手動調整路線 ----------
+function updateRouteEdit() {
+  const route = state.routes[state.selected];
+  $('routeEdit').hidden = !route;
+  $('undoRoute').hidden = !route || !route.previousRoute;
+  $('resetRoute').hidden = !route || !route.baseRoute;
+  if (!route) setAddingVia(false);
+}
+
+function setAddingVia(on) {
+  state.addingVia = on;
+  $('addVia').classList.toggle('active', on);
+  $('map').classList.toggle('picking', on || !!state.picking);
+}
+
+// 復原用已存的路線，不會重新查詢，也不占 Google 額度
+function restoreRoute(route) {
+  requestId++;
+  state.routes[state.selected] = route;
+  renderRoutes();
+  buildText();
+  drawMap(false);
+  setStatus('');
+}
+
+function undoRoute() {
+  const route = state.routes[state.selected];
+  if (route && route.previousRoute) restoreRoute(route.previousRoute);
+}
+
+function resetRoute() {
+  const route = state.routes[state.selected];
+  if (route && route.baseRoute) restoreRoute(route.baseRoute);
+}
+
+function nearestIndex(coords, latlng) {
+  let best = 0, bestDist = Infinity;
+  coords.forEach((c, i) => {
+    const d = (c[1] - latlng.lat) ** 2 + (c[0] - latlng.lng) ** 2;
+    if (d < bestDist) { bestDist = d; best = i; }
+  });
+  return best;
+}
+
+async function rerouteSelected(vias) {
+  const i = state.selected, old = state.routes[i], id = ++requestId;
+  setStatus('正在重新計算路線…');
+  try {
+    const points = [current('start'), ...vias, current('end')];
+    const [route] = await fetchRoutes(points, false);
+    if (id !== requestId) return;
+    route.vias = vias;
+    route.baseRoute = old.baseRoute || old;
+    route.previousRoute = old;
+    state.routes[i] = route;
+    renderRoutes();
+    buildText();
+    setStatus('');
+    drawMap(false);
+    return route;
+  } catch (e) {
+    if (id !== requestId) return null;
+    setStatus('這個位置無法連成路線，已保留原路線。', true);
+    drawMap(false);
+    return null;
+  }
+}
+
+// ---------- 依文字修改路線 ----------
+function parseRoadText(text) {
+  return text.replace(/（[^）]*）|\([^)]*\)/g, '').split(/→|->|>|、|,|，|\n/).map(s => s.trim()).filter(Boolean);
+}
+
+function normRoad(name) {
+  return name.replace(/臺/g, '台').replace(/\s/g, '').replace(/[一二三四五六七八九十\d]+段$/, '');
+}
+
+// 路線上每條道路的代表點，取該路最長一段的中點
+function routeRoads(route) {
+  const roads = [];
+  routeSteps(route).forEach(step => {
+    const label = mainLabel(step);
+    if (!label || !step.geometry) return;
+    const coords = step.geometry.coordinates, mid = coords[Math.floor(coords.length / 2)];
+    const point = { lat: mid[1], lng: mid[0] }, norm = normRoad(label), last = roads[roads.length - 1];
+    if (last && last.norm === norm) {
+      if (step.distance > last.longest) { last.longest = step.distance; last.point = point; }
+    } else {
+      roads.push({ norm, longest: step.distance, point });
+    }
+  });
+  return roads;
+}
+
+function detourCost(p, a, b) {
+  const at = o => [o.lng, o.lat];
+  return meters(at(a), at(p)) + meters(at(p), at(b)) - meters(at(a), at(b));
+}
+
+async function roadCandidates(query) {
+  if (useGoogle()) return geocodeGoogle(query);
+  const arcgis = await geocodeArcgis(query).catch(() => []);
+  // Nominatim 的使用規範是每秒最多一次
+  await new Promise(resolve => setTimeout(resolve, 1100));
+  const nominatim = await geocodeNominatim(query).catch(() => []);
+  return [...arcgis, ...nominatim];
+}
+
+// 優先用備案路線上同名道路的位置，否則從搜尋結果挑繞行最少的點
+async function locateRoad(name, a, b) {
+  const norm = normRoad(name);
+  for (const other of state.routes) {
+    const road = routeRoads(other).find(r => r.norm === norm);
+    if (road) return { point: road.point, cost: detourCost(road.point, a, b) };
+  }
+  const counties = await Promise.all([pointCounty(a.lat, a.lng), pointCounty(b.lat, b.lng)]);
+  const queries = [...new Set(counties.filter(Boolean))].map(county => county + name);
+  queries.push(name);
+  const list = [];
+  for (const query of queries) list.push(...await roadCandidates(query));
+  const ranked = list.map(c => ({ point: { lat: c.lat, lng: c.lng }, cost: detourCost(c, a, b) })).sort((x, y) => x.cost - y.cost);
+  return ranked[0] || null;
+}
+
+async function planFromText(route, tokens) {
+  const shown = new Set(parseRoadText(roadChain(route, 'main')).map(normRoad));
+  const roads = routeRoads(route).filter(r => shown.has(r.norm));
+  const items = [];
+  let cursor = 0;
+  tokens.forEach(name => {
+    const norm = normRoad(name);
+    const at = roads.findIndex((r, i) => i >= cursor && r.norm === norm);
+    if (at >= 0) {
+      items.push({ name, kept: true, at, point: roads[at].point });
+      cursor = at + 1;
+    } else {
+      items.push({ name, kept: false, point: null });
+    }
+  });
+  const missing = [], maxDetour = Math.max(20000, route.distance * 0.5);
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.kept) continue;
+    if (/國道/.test(item.name)) {
+      missing.push(item.name + '（請改填交流道名稱）');
+      continue;
+    }
+    const prev = items.slice(0, i).reverse().find(o => o.point);
+    const next = items.slice(i + 1).find(o => o.kept);
+    const a = prev ? prev.point : current('start'), b = next ? next.point : current('end');
+    const found = await locateRoad(item.name, a, b);
+    if (found && found.cost <= maxDetour) item.point = found.point;
+    else missing.push(item.name);
+  }
+  // 未曾手動改過時，只固定改動處前後的道路，其餘交給路線服務，途經點才不會太多
+  const keepAll = route.vias.length > 0;
+  let prevKept = null;
+  items.forEach((item, i) => {
+    if (!item.kept) {
+      item.keep = true;
+      if (items[i - 1]) items[i - 1].keep = true;
+      if (items[i + 1]) items[i + 1].keep = true;
+      return;
+    }
+    const gap = prevKept ? item.at - prevKept.at > 1 : item.at > 0;
+    if (gap) {
+      item.keep = true;
+      if (prevKept) prevKept.keep = true;
+    }
+    prevKept = item;
+  });
+  if (prevKept && prevKept.at < roads.length - 1) prevKept.keep = true;
+  const vias = items.filter(item => item.point && (keepAll || item.keep)).map(item => item.point).slice(0, 20);
+  return { vias, missing };
+}
+
+async function applyRouteText() {
+  const route = state.routes[state.selected];
+  if (!route) return;
+  const tokens = parseRoadText($('routeText').value);
+  if (!tokens.length) return setStatus('請輸入至少一條路名。', true);
+  const before = parseRoadText(roadChain(route, 'main'));
+  if (tokens.map(normRoad).join('|') === before.map(normRoad).join('|')) return setStatus('路線文字沒有變更。');
+  $('applyRouteText').disabled = true;
+  setStatus('正在依文字重新規劃…');
+  try {
+    const { vias, missing } = await planFromText(route, tokens);
+    if (missing.length) return setStatus('找不到或距離路線太遠：' + missing.join('、') + '。路線未變更，請修改名稱後再試。', true);
+    const next = await rerouteSelected(vias);
+    if (!next) return;
+    const passed = new Set(routeRoads(next).map(r => r.norm));
+    const wanted = new Set(tokens.map(normRoad));
+    const notPassed = tokens.filter(name => !passed.has(normRoad(name)));
+    const stillPassed = before.filter(name => !wanted.has(normRoad(name)) && passed.has(normRoad(name)));
+    const notes = [];
+    if (notPassed.length) notes.push('未確認行經：' + notPassed.join('、') + '，路線可能繞路，建議按「復原上一步」後改用地圖調整。');
+    if (stillPassed.length) notes.push('仍會經過：' + stillPassed.join('、') + '，可能是必經或最快路段，可用拖曳改道。');
+    setStatus(notes.join('') || '已依文字更新路線與時間，請在地圖上確認。', notPassed.length > 0);
+  } catch (e) {
+    setStatus(friendlyError(e), true);
+  } finally {
+    $('applyRouteText').disabled = false;
+  }
+}
+
+function insertVia(route, startLatLng, dropLatLng) {
+  const coords = route.geometry.coordinates;
+  const at = nearestIndex(coords, startLatLng);
+  const before = route.vias.filter(v => nearestIndex(coords, v) <= at).length;
+  const vias = [...route.vias];
+  vias.splice(before, 0, { lat: dropLatLng.lat, lng: dropLatLng.lng });
+  rerouteSelected(vias);
+}
+
+function startRouteDrag(e) {
+  if (state.picking || state.addingVia) return;
+  L.DomEvent.stop(e);
+  e.originalEvent.preventDefault();
+  const route = state.routes[state.selected], startLatLng = e.latlng, startPoint = e.containerPoint;
+  map.dragging.disable();
+  const ghost = L.circleMarker(startLatLng, { radius: 7, color: ROUTE_COLORS.on, fillColor: '#fff', fillOpacity: 1, weight: 3, interactive: false }).addTo(map);
+  let last = e;
+  const move = ev => { last = ev; ghost.setLatLng(ev.latlng); };
+  const up = () => {
+    map.off('mousemove', move);
+    document.removeEventListener('mouseup', up);
+    map.dragging.enable();
+    ghost.remove();
+    if (last.containerPoint.distanceTo(startPoint) > 6) insertVia(route, startLatLng, last.latlng);
+  };
+  map.on('mousemove', move);
+  document.addEventListener('mouseup', up);
+}
+
+// ---------- 地圖 ----------
+let map = null, layer = null, baseLayer = null, layerControl = null, googleLayer = null, googleSession = '', googleAttribution = '';
+if (window.L) {
+  map = L.map('map').setView([23.7, 121], 7);
+  baseLayer = L.tileLayer('https://wmts.nlsc.gov.tw/wmts/EMAP/default/GoogleMapsCompatible/{z}/{y}/{x}', {
+    maxZoom: 19, maxNativeZoom: 19, referrerPolicy: 'no-referrer',
+    attribution: '圖資 &copy; 內政部國土測繪中心 | 路線 &copy; OpenStreetMap contributors'
+  }).addTo(map);
+  const sections = L.tileLayer('https://wmts.nlsc.gov.tw/wmts/LANDSECT/default/GoogleMapsCompatible/{z}/{y}/{x}', {
+    maxZoom: 19, maxNativeZoom: 19, referrerPolicy: 'no-referrer'
+  });
+  layerControl = L.control.layers({ '通用電子地圖': baseLayer }, { '地段界線': sections }, { collapsed: false }).addTo(map);
+  layer = L.layerGroup().addTo(map);
+  map.on('click', onMapClick);
+  map.on('moveend', updateGoogleAttribution);
+  const editControl = L.control({ position: 'topleft' });
+  editControl.onAdd = () => {
+    L.DomEvent.disableClickPropagation($('routeEdit'));
+    return $('routeEdit');
+  };
+  editControl.addTo(map);
+} else {
+  $('map').textContent = '地圖載入失敗，仍可輸入地址或經緯度進行評估。';
+  $('startPick').disabled = $('endPick').disabled = true;
+}
+
+// Google 的路線須顯示在 Google 底圖上，所以先換底圖再畫路線
+async function ensureGoogleMap() {
+  if (!map || googleLayer) return;
+  const key = googleKey();
+  const data = await googleJson('https://tile.googleapis.com/v1/createSession?key=' + encodeURIComponent(key), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mapType: 'roadmap', language: 'zh-TW', region: 'TW' })
+  });
+  googleSession = data.session;
+  googleLayer = L.tileLayer('https://tile.googleapis.com/v1/2dtiles/{z}/{x}/{y}?session=' + encodeURIComponent(googleSession) + '&key=' + encodeURIComponent(key), {
+    maxZoom: 19, referrerPolicy: 'no-referrer'
+  });
+  map.removeLayer(baseLayer);
+  layerControl.removeLayer(baseLayer);
+  layerControl.addBaseLayer(googleLayer, 'Google 地圖');
+  googleLayer.addTo(map);
+  updateGoogleAttribution();
+}
+
+function removeGoogleMap() {
+  if (!map || !googleLayer) return;
+  map.removeLayer(googleLayer);
+  layerControl.removeLayer(googleLayer);
+  layerControl.addBaseLayer(baseLayer, '通用電子地圖');
+  baseLayer.addTo(map);
+  setGoogleAttribution('');
+  googleLayer = null;
+  googleSession = '';
+}
+
+function setGoogleAttribution(text) {
+  if (googleAttribution) map.attributionControl.removeAttribution(googleAttribution);
+  googleAttribution = text.replace(/[<>&]/g, '');
+  if (googleAttribution) map.attributionControl.addAttribution(googleAttribution);
+}
+
+async function updateGoogleAttribution() {
+  if (!googleLayer) return;
+  const session = googleSession;
+  setGoogleAttribution(googleAttribution || 'Google Maps');
+  try {
+    const b = map.getBounds();
+    const data = await googleJson('https://tile.googleapis.com/tile/v1/viewport?session=' + encodeURIComponent(session) + '&key=' + encodeURIComponent(googleKey()) +
+      '&zoom=' + map.getZoom() + '&north=' + b.getNorth() + '&south=' + b.getSouth() + '&east=' + b.getEast() + '&west=' + b.getWest());
+    if (session === googleSession && data.copyright) setGoogleAttribution('Google Maps ' + data.copyright);
+  } catch (e) { /* 取不到版權字串時保留 Google Maps 標示 */ }
+}
+
+function pin(c, text, color) {
+  L.circleMarker([c.lat, c.lng], { radius: 9, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 })
+    .bindTooltip(text, { permanent: true, direction: 'top', offset: [0, -8] }).addTo(layer);
+}
+
+function viaPin(route, via, i) {
+  const marker = L.marker([via.lat, via.lng], {
+    draggable: true, title: '拖曳可移動，按右鍵刪除',
+    icon: L.divIcon({ className: '', html: '<div class="via-pin"></div>', iconSize: [16, 16], iconAnchor: [8, 8] })
+  }).addTo(layer);
+  marker.on('dragend', () => {
+    const p = marker.getLatLng(), vias = [...route.vias];
+    vias[i] = { lat: p.lat, lng: p.lng };
+    rerouteSelected(vias);
+  });
+  marker.on('contextmenu', () => rerouteSelected(route.vias.filter((v, n) => n !== i)));
+}
+
+function drawMap(fit = true) {
+  if (!map) return;
+  layer.clearLayers();
+  const bounds = [];
+  state.routes.forEach((r, i) => {
+    if (i === state.selected) return;
+    const other = L.geoJSON(r.geometry, { style: { color: ROUTE_COLORS.off, weight: 5, opacity: .8 } }).addTo(layer);
+    other.on('click', e => {
+      if (state.picking || state.addingVia) return;
+      L.DomEvent.stop(e);
+      selectRoute(i);
+    });
+    bounds.push(other.getBounds());
+  });
+  const chosen = state.routes[state.selected];
+  if (chosen) {
+    const line = L.geoJSON(chosen.geometry, { style: { color: ROUTE_COLORS.on, weight: 6 } }).addTo(layer);
+    // 加一條較粗的透明線，比較容易按到路線
+    const grip = L.geoJSON(chosen.geometry, { style: { color: ROUTE_COLORS.on, weight: 18, opacity: 0 } }).addTo(layer);
+    grip.on('mousedown', startRouteDrag);
+    bounds.push(line.getBounds());
+    chosen.vias.forEach((via, i) => viaPin(chosen, via, i));
+  }
+  [['start', '起', '#17624f'], ['end', '終', '#a32a22']].forEach(([key, text, color]) => {
+    if (!state[key]) return;
+    const c = current(key);
+    pin(c, text, color);
+    bounds.push(L.latLngBounds([[c.lat, c.lng], [c.lat, c.lng]]));
+  });
+  if (fit && bounds.length) {
+    const all = bounds.reduce((acc, b) => acc.extend(b), L.latLngBounds(bounds[0].getSouthWest(), bounds[0].getNorthEast()));
+    map.fitBounds(all, { padding: [50, 50], maxZoom: 16 });
+  }
+}
+
+function setPicking(key) {
+  state.picking = state.picking === key ? null : key;
+  $('startPick').classList.toggle('active', state.picking === 'start');
+  $('endPick').classList.toggle('active', state.picking === 'end');
+  $('map').classList.toggle('picking', !!state.picking);
+  if (state.picking) setStatus('請在地圖上點選' + (key === 'start' ? '起點' : '終點') + '。');
+  else setStatus('');
+}
+
+async function onMapClick(e) {
+  if (state.addingVia) {
+    setAddingVia(false);
+    insertVia(state.routes[state.selected], e.latlng, e.latlng);
+    return;
+  }
+  if (!state.picking) return;
+  const key = state.picking, lat = e.latlng.lat, lng = e.latlng.lng;
+  setPicking(key);
+  setStatus('正在查詢該位置的地址與地段…');
+  const info = await placeInfo(lat, lng);
+  const name = info.address + (info.section ? '（' + info.section + '）' : '');
+  $(key + 'Input').value = info.address;
+  state[key] = { query: info.address, candidates: [{ name, lat, lng, fuzzy: false }], index: 0 };
+  showCandidates(key);
+  clearRoutes();
+  drawMap();
+  setStatus('');
+  if (state.start && state.end) analyze();
+}
+
+// ---------- 流程 ----------
+function setStatus(text, isError) {
+  $('status').textContent = text;
+  $('status').className = isError ? 'err' : '';
+}
+
+function clearRoutes() {
+  state.routes = [];
+  state.selected = 0;
+  state.textRoute = null;
+  $('routesPanel').hidden = $('textPanel').hidden = true;
+  updateRouteEdit();
+  renderSegments();
+  renderCounties();
+}
+
+function friendlyError(e) {
+  return e instanceof TypeError || e.name === 'AbortError' || /^HTTP /.test(e.message) ? '連線地圖服務失敗，請確認網路後再試一次。' : e.message;
+}
+
+async function analyze() {
+  const id = ++requestId;
+  $('go').disabled = true;
+  setStatus('正在定位與計算路線…');
+  try {
+    if (useGoogle()) await ensureGoogleMap();
+    await resolvePoint('start', '起點');
+    await resolvePoint('end', '終點');
+    const routes = await fastestTwo();
+    if (id !== requestId) return;
+    state.routes = routes;
+    state.selected = 0;
+    renderRoutes();
+    buildText();
+    drawMap();
+    $('routesPanel').hidden = $('textPanel').hidden = false;
+    const label = k => k === 'start' ? '起點' : '終點';
+    const several = ['start', 'end'].filter(k => state[k].candidates.length > 1).map(label);
+    const fuzzy = ['start', 'end'].filter(k => current(k).fuzzy).map(label);
+    const notes = [];
+    if (routes.length < 2) notes.push('這兩點只找到一條可行路線。');
+    if (hasMiddleAlley(routes[0])) notes.push('路線中段仍經過巷弄：' + middleAlleys(routes[0]).names.join('、') + '，可用拖曳改道。');
+    if (several.length) notes.push(several.join('、') + '有多筆定位結果，請確認選單中的位置。');
+    if (fuzzy.length) notes.push(fuzzy.join('、') + '為近似比對，請特別確認。');
+    setStatus(notes.join(''));
+  } catch (e) {
+    if (id !== requestId) return;
+    clearRoutes();
+    drawMap();
+    setStatus(friendlyError(e), true);
+  } finally {
+    if (id === requestId) $('go').disabled = false;
+  }
+}
+
+// 只填一端時先定位到地圖；兩端都有才計算路線
+async function locate(key) {
+  const other = key === 'start' ? 'end' : 'start';
+  if ($(other + 'Input').value.trim()) return analyze();
+  const id = ++requestId;
+  setStatus('正在定位…');
+  try {
+    if (useGoogle()) await ensureGoogleMap();
+    await resolvePoint(key, key === 'start' ? '起點' : '終點');
+    if (id !== requestId) return;
+    clearRoutes();
+    drawMap();
+    setStatus(state[key].candidates.length > 1 ? '有多筆定位結果，請確認選單中的位置。' : '');
+  } catch (e) {
+    if (id === requestId) setStatus(friendlyError(e), true);
+  }
+}
+
+function clearAll() {
+  requestId++;
+  ['startInput', 'endInput', 'output'].forEach(id => { $(id).value = ''; });
+  state.start = state.end = null;
+  showCandidates('start');
+  showCandidates('end');
+  clearRoutes();
+  drawMap();
+  if (map) map.setView([23.7, 121], 7);
+  $('go').disabled = false;
+  setStatus('');
+}
+
+async function copyText() {
+  const area = $('output');
+  try {
+    await navigator.clipboard.writeText(area.value);
+  } catch (e) {
+    area.select();
+    if (!document.execCommand('copy')) {
+      $('copyMsg').textContent = '無法自動複製，請按 Ctrl+C。';
+      return;
+    }
+  }
+  $('copyMsg').textContent = '已複製，可直接貼到計畫中。';
+}
+
+function refreshTimes() {
+  if (!state.routes.length) return;
+  renderRoutes();
+  buildText();
+}
+
+function resetLocations() {
+  requestId++;
+  state.start = state.end = null;
+  showCandidates('start');
+  showCandidates('end');
+  clearRoutes();
+  drawMap();
+  $('go').disabled = false;
+  setStatus('');
+}
+
+// 切換來源時不自動查詢，避免未經確認就把內容傳給另一個服務
+function setEngine() {
+  const google = useGoogle();
+  $('googleBox').hidden = !google;
+  $('factorBox').hidden = google;
+  $('googleTimeHint').hidden = !google;
+  $('privacyNote').textContent = PRIVACY_NOTES[google ? 'google' : 'free'];
+  if (!google) removeGoogleMap();
+  resetLocations();
+}
+
+function readStoredKey() {
+  try { return localStorage.getItem(KEY_STORAGE) || ''; } catch (e) { return ''; }
+}
+
+function writeStoredKey() {
+  try {
+    if ($('rememberKey').checked && $('apiKey').value.trim()) localStorage.setItem(KEY_STORAGE, $('apiKey').value.trim());
+    else localStorage.removeItem(KEY_STORAGE);
+  } catch (e) { /* 無法儲存時，金鑰只留在頁面上 */ }
+}
+
+Object.entries(BANDS).forEach(([key, band]) => {
+  const opt = document.createElement('option');
+  opt.value = key;
+  opt.textContent = band.label;
+  $('band').append(opt);
+});
+setDepartNow();
+const storedKey = readStoredKey();
+if (storedKey) {
+  $('apiKey').value = storedKey;
+  $('rememberKey').checked = true;
+  $('engine').value = 'google';
+}
+setEngine();
+
+$('engine').addEventListener('change', setEngine);
+$('apiKey').addEventListener('change', () => {
+  writeStoredKey();
+  removeGoogleMap();
+  resetLocations();
+});
+$('rememberKey').addEventListener('change', writeStoredKey);
+$('go').addEventListener('click', analyze);
+$('clear').addEventListener('click', clearAll);
+$('copy').addEventListener('click', copyText);
+$('startPick').addEventListener('click', () => setPicking('start'));
+$('endPick').addEventListener('click', () => setPicking('end'));
+$('detail').addEventListener('change', buildText);
+$('withAlt').addEventListener('change', buildText);
+$('depart').addEventListener('change', () => {
+  const d = departDate();
+  if (d) applyBand(bandOf(d));
+  if (useGoogle() && state.routes.length) analyze();
+  else refreshTimes();
+});
+$('band').addEventListener('change', () => { applyBand($('band').value); refreshTimes(); });
+$('factor').addEventListener('input', refreshTimes);
+$('freewayRate').addEventListener('input', refreshTimes);
+$('expressRate').addEventListener('input', refreshTimes);
+$('withSegments').addEventListener('change', buildText);
+$('mode').addEventListener('change', () => {
+  $('timeBox').hidden = !MODES[$('mode').value].traffic;
+  if (state.routes.length) analyze();
+});
+$('applyRouteText').addEventListener('click', applyRouteText);
+$('withCounty').addEventListener('change', buildText);
+$('addVia').addEventListener('click', () => {
+  setAddingVia(!state.addingVia);
+  setStatus(state.addingVia ? '請在地圖上點選要經過的位置。' : '');
+});
+$('undoRoute').addEventListener('click', undoRoute);
+$('resetRoute').addEventListener('click', resetRoute);
+document.addEventListener('keydown', e => {
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z' || e.shiftKey) return;
+  if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+  e.preventDefault();
+  undoRoute();
+});
+['start', 'end'].forEach(key => {
+  $(key + 'Input').addEventListener('keydown', e => { if (e.key === 'Enter') locate(key); });
+  $(key + 'Cand').addEventListener('change', e => {
+    state[key].index = Number(e.target.value);
+    analyze();
+  });
+});
+$('swap').addEventListener('click', () => {
+  const a = $('startInput').value;
+  $('startInput').value = $('endInput').value;
+  $('endInput').value = a;
+  [state.start, state.end] = [state.end, state.start];
+  showCandidates('start');
+  showCandidates('end');
+  if (state.start && state.end) analyze();
+});
+</script>
+</body>
+</html>
