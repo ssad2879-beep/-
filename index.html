@@ -2,8 +2,15 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline' https://cdnjs.cloudflare.com; img-src data: https://wmts.nlsc.gov.tw https://cdnjs.cloudflare.com https://tile.googleapis.com; connect-src https://geocode.arcgis.com https://nominatim.openstreetmap.org https://routing.openstreetmap.de https://api.nlsc.gov.tw https://maps.googleapis.com https://routes.googleapis.com https://tile.googleapis.com; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="路線評估">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#17624f">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline' https://cdnjs.cloudflare.com; manifest-src 'self'; img-src 'self' data: https://wmts.nlsc.gov.tw https://cdnjs.cloudflare.com https://tile.googleapis.com; connect-src https://geocode.arcgis.com https://nominatim.openstreetmap.org https://routing.openstreetmap.de https://api.nlsc.gov.tw https://maps.googleapis.com https://routes.googleapis.com https://tile.googleapis.com; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <title>路線評估工具</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" integrity="sha256-tXCrvaljxgtN5LT/Syb5Mm9T+yzPFGH98JVcoJT7JTk=" crossorigin="anonymous">
@@ -24,7 +31,10 @@ body {
   margin: 0; background: var(--bg); color: var(--ink);
   font: 15px/1.6 "Microsoft JhengHei", "Noto Sans TC", "PingFang TC", sans-serif;
 }
-.wrap { max-width: 1240px; margin: 0 auto; padding: 20px 16px 32px; }
+.wrap {
+  max-width: 1240px; margin: 0 auto;
+  padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(32px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+}
 h1 { font-size: 21px; margin: 0 0 14px; }
 .grid { display: grid; grid-template-columns: minmax(0, 440px) minmax(0, 1fr); gap: 14px; align-items: start; }
 .col { display: grid; gap: 14px; min-width: 0; }
@@ -174,11 +184,11 @@ a { color: var(--accent); }
       <section class="panel" id="routesPanel" hidden>
         <h2>路線選擇</h2>
         <div id="routes"></div>
-        <p class="hint" style="margin:0 0 8px">按住綠色路線拖曳即可改道（游標變成十字箭頭才算抓到線），手機用手指按住路線拖曳；也可按地圖左上角「加途經點」再點地圖。途經點可再拖曳，按右鍵或長按可刪除。距離、時間、明細和計畫文字會自動更新。拉錯時用地圖左上角的按鈕或 Ctrl+Z 復原。</p>
+        <p class="hint" style="margin:0 0 8px">改路線最簡單的方式是直接修改下方文字。也可按住綠色路線拖到要走的路上（電腦游標變成十字箭頭才算抓到線，手機用手指按住路線），或按地圖左上角「加途經點」再點地圖。途經點可再拖曳，按右鍵或長按可刪除。距離、時間、明細和計畫文字會自動更新。拉錯時用地圖左上角的按鈕或 Ctrl+Z 復原。</p>
         <div class="field">
           <label for="routeText">修改建議路線</label>
           <textarea id="routeText" spellcheck="false"></textarea>
-          <p class="hint">以 → 或頓號分隔路名，可新增、刪除或調整順序，再按下方按鈕重算距離與時間。</p>
+          <p class="hint">以 → 或頓號分隔路名，可新增、刪除或調整順序。改完點欄位外任一處或按下方按鈕，地圖、距離與時間就會重算；直接改計畫文字裡的「建議路線」那一行也可以。</p>
         </div>
         <div class="row" style="flex-wrap:wrap">
           <button type="button" class="primary" id="applyRouteText">依文字重新規劃</button>
@@ -444,7 +454,13 @@ async function googleRoutes(points, alternatives) {
     units: 'METRIC',
     polylineEncoding: 'GEO_JSON_LINESTRING'
   };
-  if (points.length > 2) body.intermediates = points.slice(1, -1).map(p => ({ ...toWaypoint(p), via: true }));
+  if (points.length > 2) {
+    body.intermediates = points.slice(1, -1).map((p, k) => {
+      const waypoint = { ...toWaypoint(p), via: true };
+      waypoint.location.heading = Math.round(bearingAt(points, k + 1));
+      return waypoint;
+    });
+  }
   else if (alternatives) body.computeAlternativeRoutes = true;
   if (mode.googleMode === 'DRIVE') {
     body.routingPreference = 'TRAFFIC_AWARE';
@@ -553,14 +569,45 @@ function pointText(key) {
 }
 
 // ---------- 路線 ----------
+function bearing(a, b) {
+  const rad = Math.PI / 180, dLng = (b.lng - a.lng) * rad;
+  const y = Math.sin(dLng) * Math.cos(b.lat * rad);
+  const x = Math.cos(a.lat * rad) * Math.sin(b.lat * rad) - Math.sin(a.lat * rad) * Math.cos(b.lat * rad) * Math.cos(dLng);
+  return (Math.atan2(y, x) / rad + 360) % 360;
+}
+
+// 途經點的行進方向：從前一點往下一點
+function bearingAt(points, k) {
+  return bearing(points[k - 1], points[k + 1]);
+}
+
 async function fetchRoutes(points, alternatives) {
   if (useGoogle()) return googleRoutes(points, alternatives);
   const coords = points.map(p => p.lng + ',' + p.lat).join(';');
   const url = 'https://routing.openstreetmap.de/' + MODES[$('mode').value].osrm + '/route/v1/driving/' + coords +
     '?overview=full&geometries=geojson&steps=true&alternatives=' + alternatives;
-  const data = await fetchJson(url);
+  // 途經點只吸附到同方向的車道，避免落在對向車道而開過頭再迴轉
+  const headings = points.length > 2
+    ? '&bearings=' + points.map((p, k) => k === 0 || k === points.length - 1 ? '' : Math.round(bearingAt(points, k)) + ',90').join(';')
+    : '';
+  let data = headings ? await fetchJson(url + headings).catch(() => null) : null;
+  if (!data || data.code !== 'Ok') data = await fetchJson(url);
   if (data.code !== 'Ok' || !data.routes.length) throw new Error('兩點間找不到可行路線，請確認位置或改選交通方式。');
   return data.routes;
+}
+
+// 路線重複走同一段路的長度（往返或繞一圈回來）
+function overlapMeters(route) {
+  const seen = new Set(), key = c => c[0].toFixed(5) + ',' + c[1].toFixed(5);
+  const coords = route.geometry.coordinates;
+  let total = 0;
+  for (let i = 1; i < coords.length; i++) {
+    const a = key(coords[i - 1]), b = key(coords[i]);
+    if (a === b) continue;
+    if (seen.has(a + '>' + b) || seen.has(b + '>' + a)) total += meters(coords[i - 1], coords[i]);
+    seen.add(a + '>' + b);
+  }
+  return total;
 }
 
 function isDifferentRoute(a, b) {
@@ -805,9 +852,16 @@ function routePlan(route) {
     if (!road) continue;
     let j = i;
     while (j + 1 < steps.length) {
-      const next = highwayOf(steps[j + 1]), after = steps[j + 2] && highwayOf(steps[j + 2]);
-      if (next && next.key === road.key) j++;
-      else if (!steps[j + 1].name && steps[j + 1].distance < 1000 && after && after.key === road.key) j += 2;
+      const next = highwayOf(steps[j + 1]);
+      if (next && next.key === road.key) {
+        j++;
+        continue;
+      }
+      // 主線上具名的橋或隧道（例如中山高的中港溪橋）不是下交流道，併回同一段
+      let k = j + 1, gap = 0;
+      while (k < steps.length && k - j <= 3 && !highwayOf(steps[k]) && !isRamp(steps[k]) && gap + steps[k].distance < 3000) gap += steps[k++].distance;
+      const resumed = k < steps.length && k > j + 1 && highwayOf(steps[k]);
+      if (resumed && resumed.key === road.key) j = k;
       else break;
     }
     const group = steps.slice(i, j + 1), routeMeters = group.reduce((sum, s) => sum + s.distance, 0);
@@ -1280,8 +1334,20 @@ function renderRoutes() {
   renderSegments();
   renderCounties();
   const a = current('start'), b = current('end');
+  const vias = googleCheckVias(route);
   $('gmap').href = 'https://www.google.com/maps/dir/?api=1&origin=' + a.lat + ',' + a.lng +
-    '&destination=' + b.lat + ',' + b.lng + '&travelmode=' + MODES[$('mode').value].google;
+    '&destination=' + b.lat + ',' + b.lng + '&travelmode=' + MODES[$('mode').value].google +
+    (vias.length ? '&waypoints=' + vias.map(v => v.lat.toFixed(6) + ',' + v.lng.toFixed(6)).join('%7C') : '');
+  $('gmap').textContent = vias.length ? '到 Google 地圖核對（含 ' + vias.length + ' 個途經點）' : '到 Google 地圖核對';
+}
+
+// 調整過的路線要把途經點帶給 Google，否則 Google 會自己重新規劃；
+// Google 地圖連結在手機瀏覽器最多 3 個途經點，其他最多 9 個，超過時平均挑選
+function googleCheckVias(route) {
+  const vias = route.vias || [];
+  const limit = matchMedia('(pointer: coarse)').matches ? 3 : 9;
+  if (vias.length <= limit) return vias;
+  return Array.from({ length: limit }, (_, k) => vias[Math.round((k + 1) * (vias.length + 1) / (limit + 1)) - 1]);
 }
 
 function selectRoute(i) {
@@ -1346,12 +1412,48 @@ function nearestIndex(coords, latlng) {
   return best;
 }
 
-async function rerouteSelected(vias) {
+// 新拉的點會和先前的途經點互相拉扯，造成路線重疊；逐一拿掉舊點試算，留下重疊最少的組合
+async function withoutOverlap(route, vias, keep) {
+  let best = { route, vias, overlap: overlapMeters(route) };
+  if (useGoogle()) return best;
+  while (best.overlap > 50 && best.vias.length > 1) {
+    let pick = null;
+    for (let k = 0; k < best.vias.length; k++) {
+      if (best.vias[k] === keep) continue;
+      const trial = best.vias.filter((_, n) => n !== k);
+      const [r] = await fetchRoutes([current('start'), ...trial, current('end')], false).catch(() => [null]);
+      if (!r) continue;
+      const candidate = { route: r, vias: trial, overlap: overlapMeters(r) };
+      if (!pick || candidate.overlap < pick.overlap || (candidate.overlap === pick.overlap && r.duration < pick.route.duration)) pick = candidate;
+    }
+    if (!pick || pick.overlap >= best.overlap) break;
+    best = pick;
+  }
+  // 新拉的點取代它前後的舊點：拿掉舊點後路線變短，就表示舊點只是把路線拉回原處
+  const at = best.vias.indexOf(keep);
+  for (const k of [at + 1, at - 1]) {
+    if (k < 0 || k >= best.vias.length || best.vias[k] === keep) continue;
+    const trial = best.vias.filter((_, n) => n !== k);
+    const [r] = await fetchRoutes([current('start'), ...trial, current('end')], false).catch(() => [null]);
+    if (r && r.duration < best.route.duration * 0.99 && overlapMeters(r) <= best.overlap) best = { route: r, vias: trial, overlap: overlapMeters(r) };
+  }
+  return best;
+}
+
+// keep：剛拉的途經點，清理重疊時不能拿掉
+async function rerouteSelected(vias, keep) {
   const i = state.selected, old = state.routes[i], id = ++requestId;
   setStatus('正在重新計算路線…');
   try {
     const points = [current('start'), ...vias, current('end')];
-    const [route] = await fetchRoutes(points, false);
+    let [route] = await fetchRoutes(points, false);
+    let removed = 0;
+    if (keep) {
+      const cleaned = await withoutOverlap(route, vias, keep);
+      removed = vias.length - cleaned.vias.length;
+      route = cleaned.route;
+      vias = cleaned.vias;
+    }
     if (id !== requestId) return;
     route.vias = vias;
     route.baseRoute = old.baseRoute || old;
@@ -1360,9 +1462,12 @@ async function rerouteSelected(vias) {
     const before = routeFigures(old), after = routeFigures(route);
     renderRoutes();
     buildText();
+    const overlap = overlapMeters(route);
     setStatus(before === after && roadChain(old, 'full') === roadChain(route, 'full')
       ? '路線沒有變化，請把線拖到另一條路上再放開。'
-      : '路線已更新：' + before + ' → ' + after + '，路段明細和計畫文字已同步。');
+      : '路線已更新：' + before + ' → ' + after + '，路段明細和計畫文字已同步。' +
+        (removed ? '已移除 ' + removed + ' 個造成重疊的舊途經點。' : '') +
+        (overlap > 50 ? '路線仍有約 ' + formatDistance(overlap) + ' 重複行駛，建議按「復原上一步」再拉一次。' : ''), overlap > 50);
     drawMap(false);
     return route;
   } catch (e) {
@@ -1413,6 +1518,38 @@ async function roadCandidates(query) {
   return [...arcgis, ...nominatim];
 }
 
+// 兩條路的路口；有多個同名路口時，挑繞行最少的
+async function roadCorner(roadA, roadB, a, b) {
+  if (/國道|交流道/.test(roadA + roadB)) return null;
+  // 搜尋結果可能是別的路口，地址要同時含兩條路名才採用
+  const stem = s => normRoad(s);
+  const names = text => { const t = (text || '').replace(/臺/g, '台').replace(/\s/g, ''); return t.includes(stem(roadA)) && t.includes(stem(roadB)); };
+  let list;
+  if (useGoogle()) {
+    list = (await geocodeGoogle(roadA + ' & ' + roadB).catch(() => [])).filter(c => !c.fuzzy && names(c.name));
+  } else {
+    const near = [(a.lng + b.lng) / 2, (a.lat + b.lat) / 2];
+    const ask = async (x, y) => {
+      const url = 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?f=json&countryCode=TWN&maxLocations=6&outFields=Addr_type' +
+        '&location=' + near[0] + ',' + near[1] + '&singleLine=' + encodeURIComponent(x + ' & ' + y);
+      const data = await fetchJson(url).catch(() => ({}));
+      return (data.candidates || []).filter(c => c.attributes.Addr_type === 'StreetInt' && c.score >= 90 && names(c.address))
+        .map(c => ({ lat: c.location.y, lng: c.location.x }));
+    };
+    list = await ask(roadA, roadB);
+    // 路口搜尋需要段別，「信義路」查不到時改試「信義路一段」到「信義路五段」
+    if (!list.length) {
+      const sections = ['一段', '二段', '三段', '四段', '五段'];
+      const tries = [];
+      if (!/段$/.test(roadB)) sections.forEach(s => tries.push([roadA, roadB + s]));
+      if (!/段$/.test(roadA)) sections.forEach(s => tries.push([roadA + s, roadB]));
+      list = (await Promise.all(tries.map(([x, y]) => ask(x, y)))).flat();
+    }
+  }
+  list.sort((x, y) => detourCost(x, a, b) - detourCost(y, a, b));
+  return list.length ? { lat: list[0].lat, lng: list[0].lng } : null;
+}
+
 // 優先用備案路線上同名道路的位置，否則從搜尋結果挑繞行最少的點
 async function locateRoad(name, a, b) {
   const norm = normRoad(name);
@@ -1429,94 +1566,228 @@ async function locateRoad(name, a, b) {
   return ranked[0] || null;
 }
 
-async function planFromText(route, tokens) {
-  const shown = new Set(parseRoadText(roadChain(route, 'main')).map(normRoad));
-  const roads = routeRoads(route).filter(r => shown.has(r.norm));
-  const items = [];
-  let cursor = 0;
-  tokens.forEach(name => {
-    const norm = normRoad(name);
-    const at = roads.findIndex((r, i) => i >= cursor && r.norm === norm);
-    if (at >= 0) {
-      items.push({ name, kept: true, at, point: roads[at].point });
-      cursor = at + 1;
-    } else {
-      items.push({ name, kept: false, point: null });
-    }
-  });
-  const missing = [], maxDetour = Math.max(20000, route.distance * 0.5);
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    if (item.kept) continue;
-    if (/國道/.test(item.name)) {
-      missing.push(item.name + '（請改填交流道名稱）');
-      continue;
-    }
-    const prev = items.slice(0, i).reverse().find(o => o.point);
-    const next = items.slice(i + 1).find(o => o.kept);
-    const a = prev ? prev.point : current('start'), b = next ? next.point : current('end');
-    const found = await locateRoad(item.name, a, b);
-    if (found && found.cost <= maxDetour) item.point = found.point;
-    else missing.push(item.name);
-  }
-  // 未曾手動改過時，只固定改動處前後的道路，其餘交給路線服務，途經點才不會太多
-  const keepAll = route.vias.length > 0;
-  let prevKept = null;
-  items.forEach((item, i) => {
-    if (!item.kept) {
-      item.keep = true;
-      if (items[i - 1]) items[i - 1].keep = true;
-      if (items[i + 1]) items[i + 1].keep = true;
-      return;
-    }
-    const gap = prevKept ? item.at - prevKept.at > 1 : item.at > 0;
-    if (gap) {
-      item.keep = true;
-      if (prevKept) prevKept.keep = true;
-    }
-    prevKept = item;
-  });
-  if (prevKept && prevKept.at < roads.length - 1) prevKept.keep = true;
-  const vias = items.filter(item => item.point && (keepAll || item.keep)).map(item => item.point).slice(0, 20);
-  return { vias, missing };
+// 「忠孝東路一段 → 忠孝東路二段」視為同一條路，只留一次
+function dedupeRoads(tokens) {
+  return tokens.filter((t, i) => i === 0 || normRoad(t) !== normRoad(tokens[i - 1]));
 }
 
-async function applyRouteText() {
+function sameRoads(a, b) {
+  return dedupeRoads(a).map(normRoad).join('|') === dedupeRoads(b).map(normRoad).join('|');
+}
+
+// 目前路線上每次換路的位置，例如「承德路 → 市民大道」轉彎處
+function routeTurns(route) {
+  const turns = [];
+  let prev = '';
+  routeSteps(route).forEach(s => {
+    const label = mainLabel(s) || (s.name && !isDirectionLabel(s.name) ? s.name : '');
+    if (!label) return;
+    const norm = normRoad(label);
+    if (prev && prev !== norm && s.geometry) {
+      const c = s.geometry.coordinates[0];
+      turns.push({ from: prev, to: norm, point: { lat: c[1], lng: c[0] } });
+    }
+    prev = norm;
+  });
+  return turns;
+}
+
+// 「中山北路 → 中山南路」是同一條路直行換名，不是轉彎
+function sameAxis(roadA, roadB) {
+  const axis = name => normRoad(name).replace(/[東西南北](?=路|街|大道)/, '');
+  return axis(roadA) === axis(roadB);
+}
+
+function interchangePoint(name, a, b) {
+  const norm = s => s.replace(/臺/g, '台');
+  const posts = Object.values(KM_POSTS).flat().filter(p => norm(p[0]) === norm(name));
+  const points = posts.map(p => ({ lat: p[2], lng: p[3] }));
+  points.sort((x, y) => detourCost(x, a, b) - detourCost(y, a, b));
+  return points[0] || null;
+}
+
+// 交流道的座標在主線上，直接當途經點會被吸到主線或橋下道路，所以改找附近的匝道
+async function rampPoint(name, center) {
+  if (!center || useGoogle()) return center;
+  const url = 'https://routing.openstreetmap.de/' + MODES[$('mode').value].osrm + '/nearest/v1/driving/' + center.lng + ',' + center.lat + '?number=40';
+  const data = await fetchJson(url).catch(() => ({}));
+  const norm = s => (s || '').replace(/臺/g, '台');
+  const ramp = (data.waypoints || []).filter(w => norm(w.name) === norm(name) && w.distance < 1500).sort((a, b) => a.distance - b.distance)[0];
+  return ramp ? { lat: ramp.location[1], lng: ramp.location[0] } : center;
+}
+
+// 路名文字的每一對相鄰道路就是一個轉彎處：原路線有的轉彎沿用原位置，新的轉彎查兩路的路口
+async function planFromText(route, tokens) {
+  const turns = routeTurns(route), end = current('end');
+  const maxDetour = Math.max(20000, route.distance * 0.5);
+  const points = [], missing = [];
+  let cursor = 0, last = current('start');
+  for (let i = 1; i < tokens.length; i++) {
+    const roadA = tokens[i - 1], roadB = tokens[i];
+    const at = turns.findIndex((t, k) => k >= cursor && t.from === normRoad(roadA) && t.to === normRoad(roadB));
+    if (at >= 0) {
+      points.push({ point: turns[at].point, changed: false });
+      cursor = at + 1;
+      last = turns[at].point;
+      continue;
+    }
+    // 國道的上下路位置由交流道決定；直行換名不是轉彎
+    if (/國道/.test(roadB) || sameAxis(roadA, roadB)) continue;
+    let point = null;
+    if (/交流道/.test(roadB)) {
+      point = await rampPoint(roadB, interchangePoint(roadB, last, end));
+      if (!point) {
+        const found = await locateRoad(roadB, last, end);
+        point = found && found.point;
+      }
+    } else {
+      point = await roadCorner(roadA, roadB, last, end);
+      if (point && detourCost(point, last, end) > maxDetour) point = null;
+      // 下交流道後接的路找不到路口時，交給路線服務自行接上
+      if (!point && /交流道/.test(roadA)) continue;
+      if (!point) {
+        const found = await locateRoad(roadB, last, end);
+        if (found && found.cost <= maxDetour) point = found.point;
+      }
+    }
+    if (point && detourCost(point, last, end) > maxDetour) point = null;
+    if (point) {
+      points.push({ point, changed: true });
+      last = point;
+    } else {
+      missing.push(roadB);
+    }
+  }
+  // 途經點太多時，保留改動處與前後一點，其餘平均取樣
+  let kept = points;
+  if (points.length > 20) {
+    const must = new Set();
+    points.forEach((p, i) => { if (p.changed) [i - 1, i, i + 1].forEach(k => { if (points[k]) must.add(k); }); });
+    const rest = points.map((p, i) => i).filter(i => !must.has(i));
+    const room = Math.max(0, 20 - must.size), step = rest.length / Math.max(1, room);
+    for (let k = 0; k < room && k * step < rest.length; k++) must.add(rest[Math.floor(k * step)]);
+    kept = [...must].sort((x, y) => x - y).slice(0, 20).map(i => points[i]);
+  }
+  return { vias: kept.map(p => p.point), missing };
+}
+
+// text 省略時讀「修改建議路線」欄位；quiet 為 true 時，文字沒變就不提示
+async function applyRouteText(text, quiet) {
   const route = state.routes[state.selected];
-  if (!route) return;
-  const tokens = parseRoadText($('routeText').value);
+  if (!route || state.applyingText) return;
+  const tokens = dedupeRoads(parseRoadText(typeof text === 'string' ? text : $('routeText').value));
   if (!tokens.length) return setStatus('請輸入至少一條路名。', true);
   const before = parseRoadText(roadChain(route, 'main'));
-  if (tokens.map(normRoad).join('|') === before.map(normRoad).join('|')) return setStatus('路線文字沒有變更。');
+  if (sameRoads(tokens, before) || sameRoads(tokens, parseRoadText(roadChain(route, 'full')))) {
+    if (!quiet) setStatus('路線文字沒有變更。');
+    return;
+  }
+  state.applyingText = true;
   $('applyRouteText').disabled = true;
-  setStatus('正在依文字重新規劃…');
+  setStatus('正在依文字重新規劃路線與時間…');
   try {
     const { vias, missing } = await planFromText(route, tokens);
     if (missing.length) return setStatus('找不到或距離路線太遠：' + missing.join('、') + '。路線未變更，請修改名稱後再試。', true);
-    const next = await rerouteSelected(vias);
+    const next = await rerouteSelected(await pruneVias(vias, tokens));
     if (!next) return;
     const passed = new Set(routeRoads(next).map(r => r.norm));
     const wanted = new Set(tokens.map(normRoad));
-    const notPassed = tokens.filter(name => !passed.has(normRoad(name)));
+    const { loops, notPassed } = textIssues(next, tokens);
     const stillPassed = before.filter(name => !wanted.has(normRoad(name)) && passed.has(normRoad(name)));
     const notes = [];
+    if (loops.length) notes.push('路線出現繞回（' + loops.join('、') + '），路口或交流道位置可能判斷錯誤，建議按「復原上一步」後改用地圖調整。');
     if (notPassed.length) notes.push('未確認行經：' + notPassed.join('、') + '，路線可能繞路，建議按「復原上一步」後改用地圖調整。');
     if (stillPassed.length) notes.push('仍會經過：' + stillPassed.join('、') + '，可能是必經或最快路段，可用拖曳改道。');
-    setStatus(notes.join('') || '已依文字更新路線與時間，請在地圖上確認。', notPassed.length > 0);
+    setStatus(notes.join('') || '已依文字更新路線與時間，請在地圖上確認。', notPassed.length > 0 || loops.length > 0);
   } catch (e) {
     setStatus(friendlyError(e), true);
   } finally {
+    state.applyingText = false;
     $('applyRouteText').disabled = false;
   }
 }
 
-function insertVia(route, startLatLng, dropLatLng) {
+// 同一條路在路線中出現兩次以上表示有繞回；另列出文字中有、路線卻沒經過的路
+function textIssues(route, tokens) {
+  const passed = new Set(routeRoads(route).map(r => r.norm));
+  const notPassed = tokens.filter(name => !/國道/.test(name) && !passed.has(normRoad(name)));
+  const sequence = dedupeRoads(parseRoadText(roadChain(route, 'full')).filter(n => !/圓環|匝道/.test(n))).map(normRoad);
+  const loops = [...new Set(sequence.filter((n, i) => sequence.indexOf(n) !== i))];
+  return { loops, notPassed };
+}
+
+// 路口或交流道定位錯時會造成繞回，逐一試著拿掉途經點，留下繞回最少、最符合文字的組合
+async function pruneVias(vias, tokens) {
+  if (useGoogle() || !vias.length) return vias;
+  const ends = [current('start'), current('end')];
+  const score = async v => {
+    const [r] = await fetchRoutes([ends[0], ...v, ends[1]], false);
+    const issues = textIssues(r, tokens);
+    return { v, issues, s: issues.loops.length * 1000 + issues.notPassed.length * 100 + travelSeconds(r) / 60 };
+  };
+  let best = await score(vias);
+  for (let round = 0; round < 4 && best.issues.loops.length; round++) {
+    let pick = null;
+    for (let i = 0; i < best.v.length; i++) {
+      const tried = await score(best.v.filter((_, k) => k !== i)).catch(() => null);
+      if (tried && (!pick || tried.s < pick.s)) pick = tried;
+    }
+    if (!pick || pick.s >= best.s) break;
+    best = pick;
+  }
+  return best.v;
+}
+
+// 直接在計畫文字裡改「建議路線」那一行，也會重算
+function applyOutputRouteLine() {
+  const line = $('output').value.split('\n').find(l => /^建議路線[：:]/.test(l));
+  if (line) applyRouteText(line.replace(/^建議路線[：:]/, ''), true);
+}
+
+// 放開位置附近 60 公尺內可吸附的點：大路優先，最後才是原位置
+async function dropCandidates(latlng) {
+  const point = { lat: latlng.lat, lng: latlng.lng };
+  if (useGoogle()) return [point];
+  const url = 'https://routing.openstreetmap.de/' + MODES[$('mode').value].osrm + '/nearest/v1/driving/' + point.lng + ',' + point.lat + '?number=15';
+  const data = await fetchJson(url).catch(() => ({}));
+  const near = (data.waypoints || []).filter(w => w.distance <= 60 && !isDirectionLabel(w.name));
+  const isMain = w => !!w.name && !/巷|弄/.test(w.name);
+  near.sort((a, b) => isMain(b) - isMain(a) || a.distance - b.distance);
+  const list = [];
+  near.forEach(w => {
+    const p = { lat: w.location[1], lng: w.location[0] };
+    if (list.length < 4 && !list.some(o => meters([o.lng, o.lat], [p.lng, p.lat]) < 15)) list.push(p);
+  });
+  list.push(point);
+  return list;
+}
+
+// 手指放開的位置常偏到旁邊的小巷或對向車道，逐一試附近的點，挑不會繞圈的那個
+async function placeVia(vias, index) {
+  const options = await dropCandidates(vias[index]);
+  if (options.length === 1) return options[0];
+  let chosen = options[0], best = Infinity;
+  for (const p of options) {
+    const trial = [...vias];
+    trial[index] = p;
+    const [r] = await fetchRoutes([current('start'), ...trial, current('end')], false).catch(() => [null]);
+    if (!r) continue;
+    const overlap = overlapMeters(r);
+    if (overlap <= 50) return p;
+    if (overlap < best) { best = overlap; chosen = p; }
+  }
+  return chosen;
+}
+
+async function insertVia(route, startLatLng, dropLatLng) {
   const coords = route.geometry.coordinates;
   const at = nearestIndex(coords, startLatLng);
   const before = route.vias.filter(v => nearestIndex(coords, v) <= at).length;
   const vias = [...route.vias];
   vias.splice(before, 0, { lat: dropLatLng.lat, lng: dropLatLng.lng });
-  rerouteSelected(vias);
+  setStatus('正在重新計算路線…');
+  vias[before] = await placeVia(vias, before);
+  rerouteSelected(vias, vias[before]);
 }
 
 function startRouteDrag(e) {
@@ -1666,10 +1937,12 @@ function viaPin(route, via, i) {
     draggable: true, title: '拖曳可移動，按右鍵刪除',
     icon: L.divIcon({ className: '', html: '<div class="via-pin"></div>', iconSize: [16, 16], iconAnchor: [8, 8] })
   }).addTo(layer);
-  marker.on('dragend', () => {
-    const p = marker.getLatLng(), vias = [...route.vias];
+  marker.on('dragend', async () => {
+    const vias = [...route.vias], p = marker.getLatLng();
     vias[i] = { lat: p.lat, lng: p.lng };
-    rerouteSelected(vias);
+    setStatus('正在重新計算路線…');
+    vias[i] = await placeVia(vias, i);
+    rerouteSelected(vias, vias[i]);
   });
   marker.on('contextmenu', () => rerouteSelected(route.vias.filter((v, n) => n !== i)));
 }
@@ -1680,7 +1953,8 @@ function drawMap(fit = true) {
   const bounds = [];
   state.routes.forEach((r, i) => {
     if (i === state.selected) return;
-    const other = L.geoJSON(r.geometry, { style: { color: ROUTE_COLORS.off, weight: 5, opacity: .8 } }).addTo(layer);
+    // 備案路線用細虛線，避免和調整後的路線混淆
+    const other = L.geoJSON(r.geometry, { style: { color: ROUTE_COLORS.off, weight: 4, opacity: .7, dashArray: '6 8' } }).addTo(layer);
     other.on('click', e => {
       if (state.picking || state.addingVia) return;
       L.DomEvent.stop(e);
@@ -1926,7 +2200,9 @@ $('mode').addEventListener('change', () => {
   $('timeBox').hidden = !MODES[$('mode').value].traffic;
   if (state.routes.length) analyze();
 });
-$('applyRouteText').addEventListener('click', applyRouteText);
+$('applyRouteText').addEventListener('click', () => applyRouteText());
+$('routeText').addEventListener('change', () => applyRouteText(undefined, true));
+$('output').addEventListener('change', applyOutputRouteLine);
 $('withCounty').addEventListener('change', buildText);
 $('addVia').addEventListener('click', () => {
   setAddingVia(!state.addingVia);
