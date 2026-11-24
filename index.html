@@ -121,7 +121,8 @@ a { color: var(--accent); }
         <div class="field">
           <label for="pasteRoute">對方提供的建議路線（可直接貼上）</label>
           <textarea id="pasteRoute" spellcheck="false" style="min-height:84px" placeholder="例：台北車站 → 承德路 → 重慶北路 → 台北交流道 → 國道1號 → 台中交流道 → 臺灣大道 → 台中市政府&#10;或：由台北車站出發，經重慶北路，於台北交流道上國道1號，台中交流道下，經臺灣大道至台中市政府"></textarea>
-          <p class="hint">第一個地點當起點、最後一個當終點，中間的路名和交流道依序經過；起點、終點欄位已填時，以欄位為準。</p>
+          <p class="hint">貼上後自動評估：第一個地點當起點、最後一個當終點，中間的路名和交流道依序經過。開頭或結尾只寫「臺北市」時，臺北市內的路段不計。一次貼多段時可在下方選擇要評估哪一段；重新貼上會直接換掉舊的結果。</p>
+          <select id="pasteLeg" aria-label="選擇要評估的路段" style="margin-bottom:8px" hidden></select>
           <button type="button" class="primary" id="pasteGo" style="width:100%">依此路線評估</button>
         </div>
         <div class="field">
@@ -342,7 +343,12 @@ async function fetchTimed(url, options, ms) {
 }
 
 async function fetchJson(url) {
-  const res = await fetchTimed(url, {}, 20000);
+  let res = await fetchTimed(url, {}, 20000);
+  // 免費服務限制查詢頻率，太密集時稍等再試
+  for (let retry = 0; res.status === 429 && retry < 3; retry++) {
+    await new Promise(resolve => setTimeout(resolve, 1500 * (retry + 1)));
+    res = await fetchTimed(url, {}, 20000);
+  }
   if (!res.ok) throw new Error('HTTP ' + res.status);
   return res.json();
 }
@@ -1524,6 +1530,8 @@ async function roadCandidates(query) {
   return [...arcgis, ...nominatim];
 }
 
+const cornerCache = new Map();
+
 // 兩條路的路口；有多個同名路口時，挑繞行最少的
 async function roadCorner(roadA, roadB, a, b) {
   if (/國道|交流道/.test(roadA + roadB)) return null;
@@ -1536,21 +1544,21 @@ async function roadCorner(roadA, roadB, a, b) {
   } else {
     const near = [(a.lng + b.lng) / 2, (a.lat + b.lat) / 2];
     const ask = async (x, y) => {
+      const key = x + '&' + y;
+      if (cornerCache.has(key)) return cornerCache.get(key);
       const url = 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?f=json&countryCode=TWN&maxLocations=6&outFields=Addr_type' +
         '&location=' + near[0] + ',' + near[1] + '&singleLine=' + encodeURIComponent(x + ' & ' + y);
       const data = await fetchJson(url).catch(() => ({}));
-      return (data.candidates || []).filter(c => c.attributes.Addr_type === 'StreetInt' && c.score >= 90 && names(c.address))
+      const found = (data.candidates || []).filter(c => c.attributes.Addr_type === 'StreetInt' && c.score >= 90 && names(c.address))
         .map(c => ({ lat: c.location.y, lng: c.location.x }));
+      cornerCache.set(key, found);
+      return found;
     };
     list = await ask(roadA, roadB);
     // 路口搜尋需要段別，「信義路」查不到時改試「信義路一段」到「信義路五段」
-    if (!list.length) {
-      const sections = ['一段', '二段', '三段', '四段', '五段'];
-      const tries = [];
-      if (!/段$/.test(roadB)) sections.forEach(s => tries.push([roadA, roadB + s]));
-      if (!/段$/.test(roadA)) sections.forEach(s => tries.push([roadA + s, roadB]));
-      list = (await Promise.all(tries.map(([x, y]) => ask(x, y)))).flat();
-    }
+    const sections = ['一段', '二段', '三段', '四段', '五段'];
+    if (!list.length && !/段$/.test(roadB)) list = (await Promise.all(sections.map(s => ask(roadA, roadB + s)))).flat();
+    if (!list.length && !/段$/.test(roadA)) list = (await Promise.all(sections.map(s => ask(roadA + s, roadB)))).flat();
   }
   list.sort((x, y) => detourCost(x, a, b) - detourCost(y, a, b));
   return list.length ? { lat: list[0].lat, lng: list[0].lng } : null;
@@ -1638,7 +1646,7 @@ async function planFromText(route, tokens) {
       continue;
     }
     // 國道的上下路位置由交流道決定；直行換名不是轉彎
-    if (/國道/.test(roadB) || sameAxis(roadA, roadB)) continue;
+    if (isHighwayToken(roadB) || sameAxis(roadA, roadB)) continue;
     let point = null;
     if (/交流道/.test(roadB)) {
       point = await rampPoint(roadB, interchangePoint(roadB, last, end));
@@ -1647,13 +1655,14 @@ async function planFromText(route, tokens) {
         point = found && found.point;
       }
     } else {
-      point = await roadCorner(roadA, roadB, last, end);
+      // 同名道路很多（例如各縣市都有中華路），下一條路應該接在上一個點附近，所以以上一個點為準挑選
+      point = await roadCorner(roadA, roadB, last, last);
       if (point && detourCost(point, last, end) > maxDetour) point = null;
       // 下交流道後接的路找不到路口時，交給路線服務自行接上
       if (!point && /交流道/.test(roadA)) continue;
       if (!point) {
-        const found = await locateRoad(roadB, last, end);
-        if (found && found.cost <= maxDetour) point = found.point;
+        const found = await locateRoad(roadB, last, last);
+        if (found && detourCost(found.point, last, end) <= maxDetour) point = found.point;
       }
     }
     if (point && detourCost(point, last, end) > maxDetour) point = null;
@@ -1719,7 +1728,8 @@ function textIssues(route, tokens) {
   const passed = new Set(routeRoads(route).map(r => r.norm));
   // 快速公路在路線資料中是全名（例如東西向快速公路 台南關廟線），另以編號（台86）比對
   routeSteps(route).forEach(s => { const h = highwayOf(s); if (h) passed.add(normRoad(h.key)); });
-  const notPassed = tokens.filter(name => !/國道/.test(name) && !passed.has(normRoad(name)) && !passed.has(normRoad(name.replace(/線$/, ''))));
+  // 巷弄多半只是進出目的地，不列入未經過的提示
+  const notPassed = tokens.filter(name => isRoadName(name) && !isHighwayToken(name) && !/匝道$|巷|弄/.test(name) && !passed.has(normRoad(name)));
   // 以實際軌跡判斷繞回，路名會因橋梁、高架分段重複出現，不能拿來判斷
   const overlap = overlapMeters(route);
   const loops = overlap > 50 ? ['約 ' + formatDistance(overlap) + ' 重複行駛'] : [];
@@ -1742,12 +1752,13 @@ async function pruneVias(vias, tokens) {
     return { v, issues, s: issues.loops.length * 1000 + issues.notPassed.length * 100 + travelSeconds(r) / 60 };
   };
   let best = await score(vias);
-  for (let round = 0; round < 4 && best.issues.loops.length; round++) {
-    let pick = null;
-    for (let i = 0; i < best.v.length; i++) {
-      const tried = await score(best.v.filter((_, k) => k !== i)).catch(() => null);
-      if (tried && (!pick || tried.s < pick.s)) pick = tried;
+  for (let round = 0; round < 3 && best.issues.loops.length; round++) {
+    // 每次同時試 3 組，避免超過免費服務的查詢頻率
+    const tried = [];
+    for (let i = 0; i < best.v.length; i += 3) {
+      tried.push(...await Promise.all(best.v.slice(i, i + 3).map((_, j) => score(best.v.filter((__, k) => k !== i + j)).catch(() => null))));
     }
+    const pick = tried.filter(Boolean).sort((x, y) => x.s - y.s)[0];
     if (!pick || pick.s >= best.s) break;
     best = pick;
   }
@@ -2055,58 +2066,166 @@ function friendlyError(e) {
 
 // ---------- 貼上對方提供的建議路線 ----------
 function isRoadName(text) {
-  return /^(國道\s*\d+甲?號?|[台臺]\d+[甲乙丙]?線?|.{1,12}(路|街|大道|橋|隧道|交流道|快速道路|快速公路|公路|高架道路)([一二三四五六七八九十]+段)?)$/.test(text) && !/號$|站$/.test(text.replace(/國道\s*\d+甲?號$/, ''));
+  return /^(國道\s*\d+甲?號?|[台臺]\d+[甲乙丙]?線?.*|\d+[甲乙丙]?(縣道|鄉道)|.{1,12}(路|街|大道|橋|隧道|交流道|匝道|快速道路|快速公路|公路|高架道路|高架道)([一二三四五六七八九十]+段)?)$/.test(text) && !/號$|站$/.test(text.replace(/國道\s*\d+甲?號$/, ''));
 }
 
-// 把「由甲出發，經乙路，於丙交流道上國道1號，丁交流道下，經戊路至己」拆成依序的地點與路名
+// 只寫縣市名稱（例如「臺北市」）不能當成定位點
+function isCityOnly(text) {
+  return /^[一-鿿]{2,3}[市縣]$/.test(text);
+}
+
+// 國道、快速道路、高架道路、省縣道這類路段由交流道決定上下位置，不另外找路口
+function isHighwayToken(text) {
+  return /國道|快速道路|快速公路|高架|縣道|鄉道|^[台臺]\d+/.test(text);
+}
+
+// 任務文件常把交流道寫成「八里匝道」，有對應的交流道就換成交流道名稱
+function rampToInterchange(text) {
+  if (!/匝道$/.test(text)) return text;
+  const name = text.replace(/匝道$/, '交流道').replace(/臺/g, '台');
+  return Object.values(KM_POSTS).some(list => list.some(p => p[0].replace(/臺/g, '台') === name)) ? name : text;
+}
+
+// 一次貼上多段（來程、臨停點、返程…）時，依標題拆開
+function splitLegs(text) {
+  const legs = [];
+  text.split('\n').forEach(line => {
+    const title = line.trim().match(/^((來程|去程|返程|回程|臨停點|路線|行程)\s*[\d一二三四五六七八九十]*)$/);
+    if (title) legs.push({ title: title[1], text: '' });
+    else {
+      if (!legs.length) legs.push({ title: '路線', text: '' });
+      legs[legs.length - 1].text += line + '\n';
+    }
+  });
+  return legs.filter(l => l.text.trim());
+}
+
+// 對方資料中的「(20.0KM，車行時間約20分)」
+function statedFigures(text) {
+  const m = text.match(/([\d.]+)\s*(KM|公里)[^)）\d]*?(約\s*)?(\d+)\s*分/i);
+  return m ? m[1] + ' 公里、約 ' + m[4] + ' 分鐘' : '';
+}
+
+// 把「由甲出發，經乙路，於丙交流道上國道1號…」或「甲－（右）乙路－丙匝道－…」拆成依序的地點與路名
 function parsePastedRoute(text) {
   const marked = text
+    .replace(/[（(][^（）()]*(KM|公里)[^（）()]*[）)]/gi, ' ')
+    // 「八里南嶽宮(新北市八里區中山路三段175號)」用括號裡的地址定位
+    .replace(/[^→－—–\-（()）\n]+?[（(]([^（）()]*?\d+號)[）)]/g, '$1')
+    // 括號裡寫的是臨停路線，要照走，不能丟掉
+    .replace(/[（(]([^（）()]*(→|－|臨停點)[^（）()]*)[）)]/g, '→$1→')
+    // 「龍米路二段與渡船頭路(迴轉)」是迴轉位置，只留主路
+    .replace(/與[^→－—–\n（(]*?[（(]迴轉[）)]/g, '')
+    .replace(/[（(](左|右|上|下|直行|迴轉|左轉|右轉|臨停點)[）)]/g, '→')
     .replace(/（[^）]*）|\([^)]*\)/g, ' ')
+    .replace(/[－—–]|\s-\s/g, '→')
+    .replace(/([一-鿿]{1,8}?路)([一二三四五六七八九十])、([一二三四五六七八九十])段/g, '$1$2段→$1$3段')
+    .replace(/與[^→，,、\n]*?口/g, '')
     .replace(/(交流道)\s*[上下](?=\s*(國道|快速|[台臺]\d|至|到|經|接|轉|$|[，,、。；;→>\s]))/g, '$1→')
     .replace(/出發|為止|抵達|到達/g, '→')
     .replace(/(路|街|大道|段|橋|交流道|號|站|府|館|場|院|校|心|區|所|廠)(經由|經(?!國)|接|轉|至|到|往)/g, '$1→');
   return marked.split(/→|->|>|、|，|,|。|；|;|\n|\s+/)
     .map(t => {
       let s = t.trim()
-        .replace(/^(起點|終點|目的地|出發地)[:：]?/, '')
-        .replace(/^(由|從|自|經由|接|轉入|轉|沿|於|在|走|行駛|下|上)+/, '')
+        .replace(/^(起點|終點|目的地|出發地|臨停點)[:：]?/, '')
+        .replace(/^(由|從|自|經由|接|轉入|轉|沿|於|在|走|行駛|管制|左轉|右轉|迴轉|直行|抵)+/, '')
         .replace(/^經(?!國)/, '')
         .replace(/(上|下|行駛|前往|往|方向)$/, '')
         .trim();
       // 「至台中市政府」去掉「至」，但「至善路」本身就是路名
       const rest = s.replace(/^(至|到|往)/, '');
       if (rest !== s && rest && !isRoadName(s)) s = rest;
-      return s;
+      return rampToInterchange(s);
     })
     .filter(Boolean);
 }
 
+function updatePasteLegs() {
+  const legs = splitLegs($('pasteRoute').value), sel = $('pasteLeg');
+  sel.replaceChildren();
+  legs.forEach((leg, i) => {
+    const opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = leg.title + (statedFigures(leg.text) ? '（' + statedFigures(leg.text) + '）' : '');
+    sel.append(opt);
+  });
+  sel.hidden = legs.length < 2;
+}
+
+// 整份資料中「名稱(地址)」的對照，下一段只寫名稱時也能用地址定位
+function placeAddresses(text) {
+  const map = {};
+  for (const m of text.matchAll(/([^\s→－—–\-（()）\n。，、:：]+?)\s*[（(]([^（）()]*?\d+號)[）)]/g)) map[m[1].trim()] = m[2].trim();
+  return map;
+}
+
+// 同名地點（例如全台有好幾座忠孝橋）有多筆時，挑離另一端最近的
+function pickNearest(key, other) {
+  const p = state[key], o = state[other];
+  if (!p || !o || p.candidates.length < 2) return;
+  const ref = o.candidates[o.index];
+  let best = 0;
+  p.candidates.forEach((c, i) => {
+    const d = meters([c.lng, c.lat], [ref.lng, ref.lat]), b = p.candidates[best];
+    if (d < meters([b.lng, b.lat], [ref.lng, ref.lat])) best = i;
+  });
+  p.index = best;
+  showCandidates(key);
+}
+
+function statedMinutes(text) {
+  const m = text.match(/(KM|公里)[^)）\d]*?(約\s*)?(\d+)\s*分/i);
+  return m ? Number(m[3]) : null;
+}
+
 async function evaluatePasted() {
-  const tokens = parsePastedRoute($('pasteRoute').value);
-  if (!tokens.length) return setStatus('請先貼上建議路線。', true);
-  const roads = [...tokens];
-  // 頭尾是地點（不是路名，或帶有縣市區的地址）就當成起點、終點；欄位已填時以欄位為準
-  const isPlace = t => !isRoadName(t) || /[市縣區鄉鎮里]/.test(t.replace(/[台臺]\d+.*$/, ''));
-  if (isPlace(roads[0])) {
-    const first = roads.shift();
-    if (!$('startInput').value.trim()) $('startInput').value = first;
-  }
-  if (roads.length && isPlace(roads[roads.length - 1])) {
-    const last = roads.pop();
-    if (!$('endInput').value.trim()) $('endInput').value = last;
-  }
-  if (!$('startInput').value.trim() || !$('endInput').value.trim()) {
-    return setStatus('找不到起點或終點：請在建議路線的頭尾寫上地點，或另外填寫起點、終點欄位。', true);
-  }
+  if (state.pasting) return;
+  const all = $('pasteRoute').value, legs = splitLegs(all);
+  const leg = legs[Number($('pasteLeg').value) || 0] || legs[0];
+  if (!leg) return setStatus('請先貼上建議路線。', true);
+  const roads = parsePastedRoute(leg.text);
+  if (!roads.length) return setStatus('請先貼上建議路線。', true);
+  // 開頭或結尾只寫縣市（例如臺北市）時，縣市內的路段不計，從下一個地點起算，並把縣市名當定位提示
+  let startCity = '', endCity = '';
+  while (roads.length > 1 && isCityOnly(roads[0])) startCity = roads.shift();
+  while (roads.length > 1 && isCityOnly(roads[roads.length - 1])) endCity = roads.pop();
+  const places = placeAddresses(all);
+  const locate = (name, city) => places[name] || (city && !/[市縣]/.test(name) ? city + name : name);
+  // 新貼的路線一律換掉舊的起訖點與結果
+  $('startInput').value = locate(roads.shift(), startCity);
+  $('endInput').value = roads.length ? locate(roads.pop(), endCity) : '';
+  if (!$('endInput').value) return setStatus('找不到終點：建議路線至少要有起點和終點兩個地點。', true);
+  state.start = state.end = null;
+  showCandidates('start');
+  showCandidates('end');
+  clearRoutes();
+  $('output').value = '';
+  state.pasting = true;
   $('pasteGo').disabled = true;
+  setStatus('正在定位起訖點…');
   try {
+    await resolvePoint('start', '起點');
+    await resolvePoint('end', '終點');
+    pickNearest('start', 'end');
+    pickNearest('end', 'start');
     await analyze();
     if (!state.routes.length) return;
     if (roads.length) {
       $('routeText').value = roads.join(' → ');
       await applyRouteText(roads.join(' → '), true, true);
     }
+    const stated = statedFigures(leg.text), statedMin = statedMinutes(leg.text);
+    if (stated && state.routes.length) {
+      const route = state.routes[state.selected];
+      const diff = Math.round(travelSeconds(route) / 60 - statedMin);
+      const verdict = Math.abs(diff) <= 5 ? '在 5 分鐘容許範圍內' : '超出 5 分鐘容許範圍，請確認路線';
+      const note = '對方資料：' + stated + '；本工具：' + routeFigures(route) + '（時間差 ' + (diff > 0 ? '+' : '') + diff + ' 分，' + verdict + '）。';
+      setStatus(note + $('mapStatus').textContent, Math.abs(diff) > 5 || $('mapStatus').classList.contains('err'));
+    }
+  } catch (e) {
+    setStatus(friendlyError(e), true);
   } finally {
+    state.pasting = false;
     $('pasteGo').disabled = false;
   }
 }
@@ -2254,6 +2373,11 @@ $('apiKey').addEventListener('change', () => {
 $('rememberKey').addEventListener('change', writeStoredKey);
 $('go').addEventListener('click', analyze);
 $('pasteGo').addEventListener('click', evaluatePasted);
+$('pasteRoute').addEventListener('input', updatePasteLegs);
+// 貼上或改完建議路線、切換路段時自動評估
+$('pasteRoute').addEventListener('paste', () => setTimeout(() => { updatePasteLegs(); evaluatePasted(); }, 0));
+$('pasteRoute').addEventListener('change', evaluatePasted);
+$('pasteLeg').addEventListener('change', evaluatePasted);
 $('clear').addEventListener('click', clearAll);
 $('copy').addEventListener('click', copyText);
 $('startPick').addEventListener('click', () => setPicking('start'));
