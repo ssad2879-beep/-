@@ -119,6 +119,12 @@ a { color: var(--accent); }
           <p class="hint">未勾選時，金鑰只留在這個頁面，關閉就消失。本次已用：定位 <span id="usageGeocode">0</span> 次、路線 <span id="usageRoutes">0</span> 次。</p>
         </div>
         <div class="field">
+          <label for="pasteRoute">對方提供的建議路線（可直接貼上）</label>
+          <textarea id="pasteRoute" spellcheck="false" style="min-height:84px" placeholder="例：台北車站 → 承德路 → 重慶北路 → 台北交流道 → 國道1號 → 台中交流道 → 臺灣大道 → 台中市政府&#10;或：由台北車站出發，經重慶北路，於台北交流道上國道1號，台中交流道下，經臺灣大道至台中市政府"></textarea>
+          <p class="hint">第一個地點當起點、最後一個當終點，中間的路名和交流道依序經過；起點、終點欄位已填時，以欄位為準。</p>
+          <button type="button" class="primary" id="pasteGo" style="width:100%">依此路線評估</button>
+        </div>
+        <div class="field">
           <label for="startInput">起點</label>
           <div class="row">
             <input type="text" id="startInput" placeholder="門牌、地標或經緯度">
@@ -1672,7 +1678,8 @@ async function planFromText(route, tokens) {
 }
 
 // text 省略時讀「修改建議路線」欄位；quiet 為 true 時，文字沒變就不提示
-async function applyRouteText(text, quiet) {
+// pasted 為 true 表示來自對方提供的建議路線，原路線不是使用者看過再刪改的，不提示「仍會經過」
+async function applyRouteText(text, quiet, pasted) {
   const route = state.routes[state.selected];
   if (!route || state.applyingText) return;
   const tokens = dedupeRoads(parseRoadText(typeof text === 'string' ? text : $('routeText').value));
@@ -1697,7 +1704,7 @@ async function applyRouteText(text, quiet) {
     const notes = [];
     if (loops.length) notes.push('路線出現繞回（' + loops.join('、') + '），路口或交流道位置可能判斷錯誤，建議按「復原上一步」後改用地圖調整。');
     if (notPassed.length) notes.push('未確認行經：' + notPassed.join('、') + '，路線可能繞路，建議按「復原上一步」後改用地圖調整。');
-    if (stillPassed.length) notes.push('仍會經過：' + stillPassed.join('、') + '，可能是必經或最快路段，可用拖曳改道。');
+    if (stillPassed.length && !pasted) notes.push('仍會經過：' + stillPassed.join('、') + '，可能是必經或最快路段，可用拖曳改道。');
     setStatus(notes.join('') || '已依文字更新路線與時間，請在地圖上確認。', notPassed.length > 0 || loops.length > 0);
   } catch (e) {
     setStatus(friendlyError(e), true);
@@ -1710,9 +1717,18 @@ async function applyRouteText(text, quiet) {
 // 同一條路在路線中出現兩次以上表示有繞回；另列出文字中有、路線卻沒經過的路
 function textIssues(route, tokens) {
   const passed = new Set(routeRoads(route).map(r => r.norm));
-  const notPassed = tokens.filter(name => !/國道/.test(name) && !passed.has(normRoad(name)));
-  const sequence = dedupeRoads(parseRoadText(roadChain(route, 'full')).filter(n => !/圓環|匝道/.test(n))).map(normRoad);
-  const loops = [...new Set(sequence.filter((n, i) => sequence.indexOf(n) !== i))];
+  // 快速公路在路線資料中是全名（例如東西向快速公路 台南關廟線），另以編號（台86）比對
+  routeSteps(route).forEach(s => { const h = highwayOf(s); if (h) passed.add(normRoad(h.key)); });
+  const notPassed = tokens.filter(name => !/國道/.test(name) && !passed.has(normRoad(name)) && !passed.has(normRoad(name.replace(/線$/, ''))));
+  // 以實際軌跡判斷繞回，路名會因橋梁、高架分段重複出現，不能拿來判斷
+  const overlap = overlapMeters(route);
+  const loops = overlap > 50 ? ['約 ' + formatDistance(overlap) + ' 重複行駛'] : [];
+  // 國道或快速公路連續兩段方向相反（K 數先減後增），表示在高速路上折返
+  const highways = routePlan(route).rows.filter(r => r.type !== 'general' && r.fromName !== r.toName);
+  highways.forEach((r, i) => {
+    const next = highways[i + 1];
+    if (next && next.name === r.name && r.toName === next.fromName) loops.push(r.name + '於' + r.toName + '折返');
+  });
   return { loops, notPassed };
 }
 
@@ -2037,6 +2053,64 @@ function friendlyError(e) {
   return e instanceof TypeError || e.name === 'AbortError' || /^HTTP /.test(e.message) ? '連線地圖服務失敗，請確認網路後再試一次。' : e.message;
 }
 
+// ---------- 貼上對方提供的建議路線 ----------
+function isRoadName(text) {
+  return /^(國道\s*\d+甲?號?|[台臺]\d+[甲乙丙]?線?|.{1,12}(路|街|大道|橋|隧道|交流道|快速道路|快速公路|公路|高架道路)([一二三四五六七八九十]+段)?)$/.test(text) && !/號$|站$/.test(text.replace(/國道\s*\d+甲?號$/, ''));
+}
+
+// 把「由甲出發，經乙路，於丙交流道上國道1號，丁交流道下，經戊路至己」拆成依序的地點與路名
+function parsePastedRoute(text) {
+  const marked = text
+    .replace(/（[^）]*）|\([^)]*\)/g, ' ')
+    .replace(/(交流道)\s*[上下](?=\s*(國道|快速|[台臺]\d|至|到|經|接|轉|$|[，,、。；;→>\s]))/g, '$1→')
+    .replace(/出發|為止|抵達|到達/g, '→')
+    .replace(/(路|街|大道|段|橋|交流道|號|站|府|館|場|院|校|心|區|所|廠)(經由|經(?!國)|接|轉|至|到|往)/g, '$1→');
+  return marked.split(/→|->|>|、|，|,|。|；|;|\n|\s+/)
+    .map(t => {
+      let s = t.trim()
+        .replace(/^(起點|終點|目的地|出發地)[:：]?/, '')
+        .replace(/^(由|從|自|經由|接|轉入|轉|沿|於|在|走|行駛|下|上)+/, '')
+        .replace(/^經(?!國)/, '')
+        .replace(/(上|下|行駛|前往|往|方向)$/, '')
+        .trim();
+      // 「至台中市政府」去掉「至」，但「至善路」本身就是路名
+      const rest = s.replace(/^(至|到|往)/, '');
+      if (rest !== s && rest && !isRoadName(s)) s = rest;
+      return s;
+    })
+    .filter(Boolean);
+}
+
+async function evaluatePasted() {
+  const tokens = parsePastedRoute($('pasteRoute').value);
+  if (!tokens.length) return setStatus('請先貼上建議路線。', true);
+  const roads = [...tokens];
+  // 頭尾是地點（不是路名，或帶有縣市區的地址）就當成起點、終點；欄位已填時以欄位為準
+  const isPlace = t => !isRoadName(t) || /[市縣區鄉鎮里]/.test(t.replace(/[台臺]\d+.*$/, ''));
+  if (isPlace(roads[0])) {
+    const first = roads.shift();
+    if (!$('startInput').value.trim()) $('startInput').value = first;
+  }
+  if (roads.length && isPlace(roads[roads.length - 1])) {
+    const last = roads.pop();
+    if (!$('endInput').value.trim()) $('endInput').value = last;
+  }
+  if (!$('startInput').value.trim() || !$('endInput').value.trim()) {
+    return setStatus('找不到起點或終點：請在建議路線的頭尾寫上地點，或另外填寫起點、終點欄位。', true);
+  }
+  $('pasteGo').disabled = true;
+  try {
+    await analyze();
+    if (!state.routes.length) return;
+    if (roads.length) {
+      $('routeText').value = roads.join(' → ');
+      await applyRouteText(roads.join(' → '), true, true);
+    }
+  } finally {
+    $('pasteGo').disabled = false;
+  }
+}
+
 async function analyze() {
   const id = ++requestId;
   $('go').disabled = true;
@@ -2179,6 +2253,7 @@ $('apiKey').addEventListener('change', () => {
 });
 $('rememberKey').addEventListener('change', writeStoredKey);
 $('go').addEventListener('click', analyze);
+$('pasteGo').addEventListener('click', evaluatePasted);
 $('clear').addEventListener('click', clearAll);
 $('copy').addEventListener('click', copyText);
 $('startPick').addEventListener('click', () => setPicking('start'));
